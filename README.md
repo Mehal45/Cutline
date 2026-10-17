@@ -70,6 +70,8 @@ npm run dist:mac     # build the Mac .dmg (run this on a Mac)
 - **Effects / Filters tabs** (left panel) show live previews on the current frame. Click one to apply it to the selected clips, or with nothing selected to add a timeline effect over everything below it. **+ Adjustment layer** grades every clip under it at once.
 - **Audio tab:** add music, or type text and press **Generate voice-over** (text-to-speech; the ~90 MB voice model downloads once).
 - **Auto captions** transcribes the timeline audio on your computer and adds word-highlighted captions.
+  - **Style all captions at once:** select a caption and tick **Apply changes to all captions**. Font, size, colours, outline, shadow, background and in/out animation then change on every caption.
+  - **Edit several at once:** press **Select all** (or box-select texts on the timeline). The inspector shows one set of font, size, colour, animation and position controls for all of them.
 - **File menu:** new, open, save (Ctrl+S), save as, export the current frame (PNG) and export the audio (WAV).
 - **Export:** choose the resolution (720p–4K), frame rate (24–60), format (H.264, HEVC, AV1, VP9) and quality.
 

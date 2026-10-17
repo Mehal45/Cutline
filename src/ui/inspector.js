@@ -1,6 +1,6 @@
 // Right-hand inspector: properties of whatever is selected.
 import React, { useState } from "react";
-import { useStore, edit, editLive, checkpoint, findItem, getState } from "../store.js";
+import { useStore, edit, editLive, checkpoint, findItem, getState, setState } from "../store.js";
 import { clipSpeed, clipTransform, BLEND_MODES, ANIMATIONS, TRANSITIONS } from "../engine.js";
 import {
   deleteSelection, rippleDelete, copySelection, duplicateSelection, setClipSpeed, SPEED_PRESETS, freezeFrame,
@@ -236,11 +236,12 @@ export function AudioSection({ kind, item, media }) {
   </div>`;
 }
 
-function AnimateSection({ kind, item, textOnly }) {
+function AnimateSection({ kind, item, textOnly, onAnim, note }) {
   const set = liveSet(kind, item.id);
   return html`<div>
     <${Section} title="In & out animation">
-      <${AnimFields} textOnly=${textOnly} anim=${item.anim} onChange=${(k, v) => set((s) => Object.assign(s.anim[k], v))} />
+      ${note}
+      <${AnimFields} textOnly=${textOnly} anim=${item.anim} onChange=${onAnim || ((k, v) => set((s) => Object.assign(s.anim[k], v)))} />
     <//>
     <${Section} title="Keyframe curves">
       <p class="muted">Press ◆ next to any slider to add a keyframe at the playhead. Move the playhead, change the value, and it animates between them.</p>
@@ -279,43 +280,114 @@ function VisualInspector({ kind, item, project }) {
 
 // ---------------- text ----------------
 
+/** Font, size, weight, case, alignment and spacing. `setSt(key, value, live)` decides which texts change. */
+function TextFontFields({ st, setSt }) {
+  return html`<div>
+    <div class="grid2">
+      <${Field} label="Size"><input type="number" min="12" max="400" value=${st.size} onChange=${(e) => setSt("size", +e.target.value)} /><//>
+      <${Field} label="Weight">
+        <select value=${st.weight} onChange=${(e) => setSt("weight", +e.target.value)}>
+          ${[300, 400, 500, 600, 700, 800, 900].map((w) => html`<option value=${w}>${w}</option>`)}
+        </select>
+      <//>
+    </div>
+    <${Field} label="Font">
+      <select value=${st.font} onChange=${(e) => { loadFont(e.target.value, st.weight); setSt("font", e.target.value); }}>
+        ${FONTS.map((f) => html`<option value=${f.css} style=${{ fontFamily: f.css }}>${f.name}</option>`)}
+      </select>
+    <//>
+    <div class="grid3">
+      <button class=${st.italic ? "chip on" : "chip"} onClick=${() => setSt("italic", !st.italic || undefined)}><i>I</i> Italic</button>
+      <button class=${st.uppercase ? "chip on" : "chip"} onClick=${() => setSt("uppercase", !st.uppercase || undefined)}>AA Caps</button>
+      <select value=${st.align || "center"} onChange=${(e) => setSt("align", e.target.value === "center" ? undefined : e.target.value)}>
+        <option value="left">Left</option><option value="center">Centre</option><option value="right">Right</option>
+      </select>
+    </div>
+    <${Slider} label="Letter spacing" value=${st.letterSpacing || 0} min=${-0.1} max=${0.5} step=${0.01} format=${(v) => v.toFixed(2)} onChange=${(v, live) => setSt("letterSpacing", v || undefined, live)} />
+    <${Slider} label="Line height" value=${st.lineHeight || 1.2} min=${0.8} max=${2} step=${0.05} format=${(v) => v.toFixed(2)} onChange=${(v, live) => setSt("lineHeight", v, live)} />
+  </div>`;
+}
+
+/** Colours, outline, shadow and background plate. */
+function TextLookFields({ st, setSt }) {
+  const shadow = st.shadow;
+  return html`<div>
+    <div class="grid2">
+      <${Field} label="Colour"><input type="color" value=${st.color} onChange=${(e) => setSt("color", e.target.value)} /><//>
+      <${Field} label="Highlight"><input type="color" value=${st.highlight} onChange=${(e) => setSt("highlight", e.target.value)} /><//>
+      <${Field} label="Outline"><input type="color" value=${st.stroke} onChange=${(e) => setSt("stroke", e.target.value)} /><//>
+      <${Field} label="Outline width"><input type="number" min="0" max="30" value=${st.strokeWidth} onChange=${(e) => setSt("strokeWidth", +e.target.value)} /><//>
+    </div>
+    <${Section} title="Shadow" open=${!!shadow}>
+      <label class="check"><input type="checkbox" checked=${!!shadow}
+        onChange=${(e) => setSt("shadow", e.target.checked ? { color: "#000000aa", blur: 10, x: 4, y: 6 } : undefined)} /> Drop shadow</label>
+      ${shadow && html`
+        <${Field} label="Colour"><input type="color" value=${(shadow.color || "#000000").slice(0, 7)} onChange=${(e) => setSt("shadow", { ...shadow, color: e.target.value + (shadow.color?.slice(7) || "aa") })} /><//>
+        <${Slider} label="Blur" value=${shadow.blur ?? 10} min=${0} max=${60} step=${1} format=${(v) => v.toFixed(0)} onChange=${(v, live) => setSt("shadow", { ...shadow, blur: v }, live)} />
+        <div class="grid2">
+          <${Slider} label="Offset X" value=${shadow.x ?? 4} min=${-40} max=${40} step=${1} format=${(v) => v.toFixed(0)} onChange=${(v, live) => setSt("shadow", { ...shadow, x: v }, live)} />
+          <${Slider} label="Offset Y" value=${shadow.y ?? 6} min=${-40} max=${40} step=${1} format=${(v) => v.toFixed(0)} onChange=${(v, live) => setSt("shadow", { ...shadow, y: v }, live)} />
+        </div>`}
+    <//>
+    <${Section} title="Background plate" open=${!!st.bg}>
+      <label class="check"><input type="checkbox" checked=${!!st.bg} onChange=${(e) => setSt("bg", e.target.checked ? "#000000aa" : "")} /> Background box</label>
+      ${st.bg && html`
+        <div class="grid2">
+          <${Field} label="Colour"><input type="color" value=${st.bg.slice(0, 7)} onChange=${(e) => setSt("bg", e.target.value + (st.bg.slice(7) || "aa"))} /><//>
+          <${Slider} label="Opacity" value=${parseInt(st.bg.slice(7) || "ff", 16) / 255} min=${0} max=${1} format=${pct}
+            onChange=${(v, live) => setSt("bg", st.bg.slice(0, 7) + Math.round(v * 255).toString(16).padStart(2, "0"), live)} />
+        </div>
+        <div class="grid2">
+          <${Slider} label="Padding" value=${st.bgPad ?? 0.6} min=${0.1} max=${2} format=${(v) => v.toFixed(2)} onChange=${(v, live) => setSt("bgPad", v, live)} />
+          <${Slider} label="Corner radius" value=${st.bgRadius ?? 0.25} min=${0} max=${1} format=${(v) => v.toFixed(2)} onChange=${(v, live) => setSt("bgRadius", v, live)} />
+        </div>`}
+    <//>
+  </div>`;
+}
+
+/** Sets one style key on every text whose id is in `ids` (one undo step per drag). */
+const setStyleOn = (ids) => (k, v, live) => (live ? editLive : edit)((p) => {
+  for (const x of p.texts) if (ids.has(x.id)) x.style[k] = v;
+});
+
+/** Changes the in or out animation (`key`) on every text whose id is in `ids`. */
+const setAnimOn = (ids) => (key, v) => edit((p) => {
+  for (const x of p.texts) if (ids.has(x.id)) x.anim = { ...x.anim, [key]: { ...(x.anim?.[key] || { type: "none", dur: 0.4 }), ...v } };
+});
+
+const selectAllCaptions = () => {
+  const ids = getState().project.texts.filter((x) => x.caption).map((x) => ({ kind: "text", id: x.id }));
+  setState({ selection: ids });
+  toast(`Selected ${ids.length} caption${ids.length === 1 ? "" : "s"}`);
+};
+
 function TextInspector({ t }) {
   const [tab, setTab] = useState("text");
+  const linked = useStore((s) => s.captionLink);
+  const captionCount = useStore((s) => s.project.texts.filter((x) => x.caption).length);
   const set = liveSet("text", t.id);
   const st = t.style;
-  const setSt = (k, v, live) => set((x) => (x.style[k] = v), live);
+  // With "Apply to all captions" on, a style change on a caption changes that setting on every caption.
+  const allCaptions = t.caption && linked;
+  const setSt = (k, v, live) => (allCaptions
+    ? setStyleOn(new Set(getState().project.texts.filter((x) => x.caption).map((x) => x.id)))(k, v, live)
+    : set((x) => (x.style[k] = v), live));
   const applyAll = () => edit((p) => p.texts.forEach((x) => {
     if (x.caption) Object.assign(x, { style: structuredClone(st), x: t.x, y: t.y, scale: t.scale, rotation: t.rotation, anim: structuredClone(t.anim) });
   }));
-  const shadow = st.shadow;
+  const linkBox = t.caption && captionCount > 1 && html`<div class="linkbar">
+    <label class="check"><input type="checkbox" checked=${!!linked} onChange=${(e) => setState({ captionLink: e.target.checked })} />
+      Apply changes to all ${captionCount} captions</label>
+    <button class="mini" onClick=${selectAllCaptions} title="Select every caption on the timeline">Select all</button>
+  </div>`;
   return html`<aside class="panel inspector">
     <h3>${t.caption ? "Caption" : "Text"}</h3>
+    ${linkBox}
     <${Tabs} tabs=${[["text", "Text"], ["style", "Style"], ["animate", "Animate"]]} tab=${tab} setTab=${setTab} />
     ${tab === "text" && html`
       <textarea rows="3" value=${t.text} onChange=${(e) => set((x) => { x.text = e.target.value; delete x.words; })} />
       ${t.caption && t.words && html`<p class="muted">Editing the text removes word-by-word highlighting for this caption.</p>`}
-      <div class="grid2">
-        <${Field} label="Size"><input type="number" min="12" max="400" value=${st.size} onChange=${(e) => setSt("size", +e.target.value)} /><//>
-        <${Field} label="Weight">
-          <select value=${st.weight} onChange=${(e) => setSt("weight", +e.target.value)}>
-            ${[300, 400, 500, 600, 700, 800, 900].map((w) => html`<option value=${w}>${w}</option>`)}
-          </select>
-        <//>
-      </div>
-      <${Field} label="Font">
-        <select value=${st.font} onChange=${(e) => { loadFont(e.target.value, st.weight); setSt("font", e.target.value); }}>
-          ${FONTS.map((f) => html`<option value=${f.css} style=${{ fontFamily: f.css }}>${f.name}</option>`)}
-        </select>
-      <//>
-      <div class="grid3">
-        <button class=${st.italic ? "chip on" : "chip"} onClick=${() => setSt("italic", !st.italic || undefined)}><i>I</i> Italic</button>
-        <button class=${st.uppercase ? "chip on" : "chip"} onClick=${() => setSt("uppercase", !st.uppercase || undefined)}>AA Caps</button>
-        <select value=${st.align || "center"} onChange=${(e) => setSt("align", e.target.value === "center" ? undefined : e.target.value)}>
-          <option value="left">Left</option><option value="center">Centre</option><option value="right">Right</option>
-        </select>
-      </div>
-      <${Slider} label="Letter spacing" value=${st.letterSpacing || 0} min=${-0.1} max=${0.5} step=${0.01} format=${(v) => v.toFixed(2)} onChange=${(v, live) => setSt("letterSpacing", v || undefined, live)} />
-      <${Slider} label="Line height" value=${st.lineHeight || 1.2} min=${0.8} max=${2} step=${0.05} format=${(v) => v.toFixed(2)} onChange=${(v, live) => setSt("lineHeight", v, live)} />
+      <${TextFontFields} st=${st} setSt=${setSt} />
       <${Section} title="Position & size">
         <${KSlider} kind="text" id=${t.id} path="x" label="X" min=${-0.5} max=${1.5} step=${0.005} fallback=${0.5} format=${pct} />
         <${KSlider} kind="text" id=${t.id} path="y" label="Y" min=${-0.5} max=${1.5} step=${0.005} fallback=${0.5} format=${pct} />
@@ -328,40 +400,39 @@ function TextInspector({ t }) {
         })}>Reset position & size</button>
       <//>`}
     ${tab === "style" && html`
-      <div class="grid2">
-        <${Field} label="Colour"><input type="color" value=${st.color} onChange=${(e) => setSt("color", e.target.value)} /><//>
-        <${Field} label="Highlight"><input type="color" value=${st.highlight} onChange=${(e) => setSt("highlight", e.target.value)} /><//>
-        <${Field} label="Outline"><input type="color" value=${st.stroke} onChange=${(e) => setSt("stroke", e.target.value)} /><//>
-        <${Field} label="Outline width"><input type="number" min="0" max="30" value=${st.strokeWidth} onChange=${(e) => setSt("strokeWidth", +e.target.value)} /><//>
-      </div>
-      <${Section} title="Shadow" open=${!!shadow}>
-        <label class="check"><input type="checkbox" checked=${!!shadow}
-          onChange=${(e) => setSt("shadow", e.target.checked ? { color: "#000000aa", blur: 10, x: 4, y: 6 } : undefined)} /> Drop shadow</label>
-        ${shadow && html`
-          <${Field} label="Colour"><input type="color" value=${(shadow.color || "#000000").slice(0, 7)} onChange=${(e) => setSt("shadow", { ...shadow, color: e.target.value + (shadow.color?.slice(7) || "aa") })} /><//>
-          <${Slider} label="Blur" value=${shadow.blur ?? 10} min=${0} max=${60} step=${1} format=${(v) => v.toFixed(0)} onChange=${(v, live) => setSt("shadow", { ...shadow, blur: v }, live)} />
-          <div class="grid2">
-            <${Slider} label="Offset X" value=${shadow.x ?? 4} min=${-40} max=${40} step=${1} format=${(v) => v.toFixed(0)} onChange=${(v, live) => setSt("shadow", { ...shadow, x: v }, live)} />
-            <${Slider} label="Offset Y" value=${shadow.y ?? 6} min=${-40} max=${40} step=${1} format=${(v) => v.toFixed(0)} onChange=${(v, live) => setSt("shadow", { ...shadow, y: v }, live)} />
-          </div>`}
-      <//>
-      <${Section} title="Background plate" open=${!!st.bg}>
-        <label class="check"><input type="checkbox" checked=${!!st.bg} onChange=${(e) => setSt("bg", e.target.checked ? "#000000aa" : "")} /> Background box</label>
-        ${st.bg && html`
-          <div class="grid2">
-            <${Field} label="Colour"><input type="color" value=${st.bg.slice(0, 7)} onChange=${(e) => setSt("bg", e.target.value + (st.bg.slice(7) || "aa"))} /><//>
-            <${Slider} label="Opacity" value=${parseInt(st.bg.slice(7) || "ff", 16) / 255} min=${0} max=${1} format=${pct}
-              onChange=${(v, live) => setSt("bg", st.bg.slice(0, 7) + Math.round(v * 255).toString(16).padStart(2, "0"), live)} />
-          </div>
-          <div class="grid2">
-            <${Slider} label="Padding" value=${st.bgPad ?? 0.6} min=${0.1} max=${2} format=${(v) => v.toFixed(2)} onChange=${(v, live) => setSt("bgPad", v, live)} />
-            <${Slider} label="Corner radius" value=${st.bgRadius ?? 0.25} min=${0} max=${1} format=${(v) => v.toFixed(2)} onChange=${(v, live) => setSt("bgRadius", v, live)} />
-          </div>`}
-      <//>
-      ${t.caption && html`<button class="wide" onClick=${applyAll}>Apply this style to all captions</button>`}`}
-    ${tab === "animate" && html`<${AnimateSection} kind="text" item=${t} textOnly />`}
+      <${TextLookFields} st=${st} setSt=${setSt} />
+      ${t.caption && html`<button class="wide" onClick=${applyAll} title="Copies this caption's whole style, position and animation to every caption">Copy this whole look to all captions</button>`}`}
+    ${tab === "animate" && html`<${AnimateSection} kind="text" item=${t} textOnly
+      onAnim=${allCaptions ? setAnimOn(new Set(getState().project.texts.filter((x) => x.caption).map((x) => x.id))) : undefined}
+      note=${allCaptions && html`<p class="muted">Changes apply to all ${captionCount} captions.</p>`} />`}
     <button class="danger wide" onClick=${deleteSelection}>Delete</button>
   </aside>`;
+}
+
+/** Shown when several texts/captions are selected: one set of controls changes all of them. */
+function MultiTextFields({ texts }) {
+  const [tab, setTab] = useState("font");
+  const ids = new Set(texts.map((x) => x.id));
+  const st = texts[0].style;
+  const setSt = setStyleOn(ids);
+  const label = texts.every((x) => x.caption) ? "captions" : "texts";
+  const same = (k) => texts.every((x) => JSON.stringify(x.style[k]) === JSON.stringify(st[k]));
+  const differ = ["font", "size", "weight", "color"].filter((k) => !same(k));
+  return html`<div class="multitext">
+    <h3>Style for ${texts.length} ${label}</h3>
+    ${differ.length > 0 && html`<p class="muted">They don't all share the same ${differ.join(", ")}; showing the first one's. Any change applies to all ${texts.length}.</p>`}
+    <${Tabs} tabs=${[["font", "Font & size"], ["look", "Colour & box"], ["anim", "Animation"], ["place", "Position"]]} tab=${tab} setTab=${setTab} />
+    ${tab === "anim" && html`<${AnimFields} textOnly anim=${texts[0].anim} onChange=${setAnimOn(ids)} />`}
+    ${tab === "font" && html`<${TextFontFields} st=${st} setSt=${setSt} />`}
+    ${tab === "look" && html`<${TextLookFields} st=${st} setSt=${setSt} />`}
+    ${tab === "place" && html`
+      <${Slider} label="Vertical position" value=${texts[0].y} min=${0} max=${1} step=${0.005} format=${pct}
+        onChange=${(v, live) => (live ? editLive : edit)((p) => { for (const x of p.texts) if (ids.has(x.id)) x.y = v; })} />
+      <${Slider} label="Horizontal position" value=${texts[0].x} min=${0} max=${1} step=${0.005} format=${pct}
+        onChange=${(v, live) => (live ? editLive : edit)((p) => { for (const x of p.texts) if (ids.has(x.id)) x.x = v; })} />
+      <${Slider} label="Scale" value=${texts[0].scale || 1} min=${0.2} max=${3} format=${pct}
+        onChange=${(v, live) => (live ? editLive : edit)((p) => { for (const x of p.texts) if (ids.has(x.id)) x.scale = v; })} />`}
+  </div>`;
 }
 
 // ---------------- audio items & timeline effects ----------------
@@ -404,8 +475,10 @@ export function Inspector() {
   if (selection.length > 1) {
     const clipIds = selection.filter((s) => s.kind === "main" || s.kind === "overlay").map((s) => s.id);
     const first = clipIds.map((id) => project.main.find((s) => s.id === id) || project.overlays.find((s) => s.id === id)).find(Boolean);
+    const texts = selection.filter((s) => s.kind === "text").map((s) => project.texts.find((x) => x.id === s.id)).filter(Boolean);
     return html`<aside class="panel inspector">
       <h3>${selection.length} items selected</h3>
+      ${texts.length > 0 && html`<${MultiTextFields} key=${texts.map((x) => x.id).join()} texts=${texts} />`}
       <p class="muted">Drag in the preview to move them together. Ctrl+C copy · Ctrl+D duplicate · Del delete.</p>
       ${first && html`<${SpeedFields} speed=${clipSpeed(first)} ids=${clipIds} />`}
       ${clipIds.length > 0 && html`<${Field} label="Filter for all selected">
