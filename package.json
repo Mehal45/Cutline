@@ -1,0 +1,48 @@
+{
+  "name": "cutline",
+  "productName": "Cutline",
+  "version": "1.0.0",
+  "description": "Free, open-source CapCut-style video editor: timeline, text animations, transitions, auto-captions and MP4 export.",
+  "author": "Mehal45",
+  "homepage": "https://github.com/Mehal45/Cutline",
+  "license": "MIT",
+  "type": "module",
+  "main": "desktop/main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "web": "node server.mjs --open",
+    "dist:win": "electron-builder --win --publish never",
+    "dist:mac": "electron-builder --mac --publish never"
+  },
+  "devDependencies": {
+    "electron": "44.9.0",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "io.github.mehal45.cutline",
+    "productName": "Cutline",
+    "directories": { "output": "dist", "buildResources": "build" },
+    "files": ["index.html", "src/**/*", "desktop/**/*", "build/icon.png", "package.json"],
+    "artifactName": "Cutline-${version}-${os}-${arch}.${ext}",
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Cutline",
+      "artifactName": "Cutline-Setup-${version}.${ext}"
+    },
+    "mac": {
+      "target": [{ "target": "dmg", "arch": ["universal"] }],
+      "category": "public.app-category.video",
+      "icon": "build/icon.png",
+      "identity": "-"
+    },
+    "dmg": { "artifactName": "Cutline-${version}-mac.${ext}" }
+  }
+}

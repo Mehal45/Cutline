@@ -1,0 +1,61 @@
+# Builds the installers on GitHub's Windows and macOS machines and attaches them to a Release.
+# Runs when a version tag (v1.2.3) is pushed, or by hand from the Actions tab.
+name: Build installers
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            script: dist:win
+            files: dist/*.exe
+          - os: macos-latest
+            script: dist:mac
+            files: dist/*.dmg
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run ${{ matrix.script }}
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.os }}
+          path: ${{ matrix.files }}
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: installers
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: installers/*
+          body: |
+            ## Download
+
+            | Your computer | File |
+            |---|---|
+            | **Windows 10 / 11** | `Cutline-Setup-….exe` |
+            | **Mac** (Apple silicon and Intel) | `Cutline-â€¦-mac.dmg` |
+
+            Installation steps are in the [README](https://github.com/${{ github.repository }}#install).
