@@ -212,20 +212,65 @@ export function splitAtPlayhead() {
 
   const seg = layoutMain(project).find((s) => time > s.start + 0.05 && time < s.start + s.dur - 0.05);
   if (!seg) return toast("Move the playhead over a clip to split it");
+  edit((p) => splitMain(p, seg, time));
+}
+
+/** Splits the main-track clip `seg` (with its computed start) at timeline time `time` (mutates). */
+function splitMain(p, seg, time) {
+  const i = p.main.findIndex((s) => s.id === seg.id);
+  const a = p.main[i];
+  const local = time - seg.start;
+  const b = { ...structuredClone(a), id: uid(), in: a.in + local * clipSpeed(a), dur: a.dur - local };
+  b.anim = { in: { ...a.anim.in, type: "none" }, out: a.anim.out };
+  if (a.keyframes) [a.keyframes, b.keyframes] = splitKeyframes(a, local);
+  if (a.audio?.fadeOut) a.audio.fadeOut = 0;
+  if (b.audio?.fadeIn) b.audio.fadeIn = 0;
+  a.dur = local;
+  a.transition = null;
+  a.anim.out = { ...a.anim.out, type: "none" };
+  p.main.splice(i + 1, 0, b);
+}
+
+/** Ctrl+B: splits every clip, layer, text, audio item and effect under the playhead, whatever is selected. */
+export function splitAllAtPlayhead() {
+  const { project, time } = getState();
+  const inside = (x) => time > x.start + 0.05 && time < x.start + x.dur - 0.05;
+  const seg = layoutMain(project).find(inside);
+  const lanes = ["texts", "overlays", "audio", "effects"].map((lane) => [lane, project[lane].filter(inside).map((x) => x.id)]).filter(([, ids]) => ids.length);
+  if (!seg && !lanes.length) return toast("Nothing under the playhead to split");
   edit((p) => {
-    const i = p.main.findIndex((s) => s.id === seg.id);
-    const a = p.main[i];
-    const local = time - seg.start;
-    const b = { ...structuredClone(a), id: uid(), in: a.in + local * clipSpeed(a), dur: a.dur - local };
-    b.anim = { in: { ...a.anim.in, type: "none" }, out: a.anim.out };
-    if (a.keyframes) [a.keyframes, b.keyframes] = splitKeyframes(a, local);
-    if (a.audio?.fadeOut) a.audio.fadeOut = 0;
-    if (b.audio?.fadeIn) b.audio.fadeIn = 0;
-    a.dur = local;
-    a.transition = null;
-    a.anim.out = { ...a.anim.out, type: "none" };
-    p.main.splice(i + 1, 0, b);
+    if (seg) splitMain(p, seg, time);
+    for (const [lane, ids] of lanes) splitTimed(p, lane, ids, time);
   });
+}
+
+/** Razor tool: splits one item at a clicked time. */
+export function splitItemAt(kind, id, time) {
+  const { project } = getState();
+  if (kind === "main") {
+    const seg = layoutMain(project).find((s) => s.id === id);
+    if (seg && time > seg.start + 0.05 && time < seg.start + seg.dur - 0.05) edit((p) => splitMain(p, seg, time));
+    return;
+  }
+  const lane = LANES[kind];
+  if (!lane) return;
+  const x = project[lane].find((y) => y.id === id);
+  if (x && time > x.start + 0.05 && time < x.start + x.dur - 0.05) edit((p) => splitTimed(p, lane, [id], time));
+}
+
+/** M: mutes or unmutes the selected clips, layers and audio. */
+export function toggleMute() {
+  const { project, selection } = getState();
+  const sel = selection.filter((s) => ["main", "overlay", "audio"].includes(s.kind));
+  if (!sel.length) return toast("Select a clip to mute it");
+  const allMuted = sel.every((s) => findItem(project, s.kind, s.id)?.mute);
+  edit((p) => sel.forEach((s) => { const it = findItem(p, s.kind, s.id); if (it) it.mute = allMuted ? undefined : true; }));
+  toast(allMuted ? "Unmuted" : "Muted");
+}
+
+/** Zooms the timeline by a factor (keyboard shortcuts). */
+export function zoomTimeline(factor) {
+  setState({ zoom: Math.max(10, Math.min(300, getState().zoom * factor)) });
 }
 
 export function deleteSelection() {

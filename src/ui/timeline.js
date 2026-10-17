@@ -1,12 +1,12 @@
 // Multi-track timeline: timeline effects, text, picture-in-picture layers, the main video track and audio tracks.
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   useStore, getState, setState, edit, editLive, checkpoint, undo, redo, layoutMain, projectDuration, isSelected, select,
   compactTracks,
 } from "../store.js";
 import { clipSpeed, TRANSITIONS } from "../engine.js";
 import {
-  pause, seek, splitAtPlayhead, deleteSelection, rippleDelete, duplicateSelection, addText, freezeFrame,
+  pause, seek, splitAtPlayhead, deleteSelection, rippleDelete, duplicateSelection, addText, freezeFrame, splitItemAt,
 } from "../actions.js";
 import { keyTimes, shiftKeyframes } from "../keyframes.js";
 import { decodeMedia } from "../media-audio.js";
@@ -154,9 +154,65 @@ export function Timeline() {
   const segs = layoutMain(project);
   const total = Math.max(projectDuration(project) + 5, 20);
 
+  const tool = useStore((s) => s.tool);
+  const anchor = useRef(null);
+
   const timeAt = (clientX) => {
     const r = scroller.current.getBoundingClientRect();
     return (clientX - r.left + scroller.current.scrollLeft - LABEL) / zoom;
+  };
+
+  // Ctrl/⌘ + mouse wheel (or a trackpad pinch) zooms around the pointer; Shift + wheel scrolls sideways.
+  useEffect(() => {
+    const el = scroller.current;
+    const onWheel = (e) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const z0 = getState().zoom;
+        const z = Math.max(10, Math.min(300, z0 * Math.exp(-e.deltaY * 0.0025)));
+        if (z === z0) return;
+        const x = e.clientX - el.getBoundingClientRect().left;
+        anchor.current = { t: (x + el.scrollLeft - LABEL) / z0, x };
+        setState({ zoom: z });
+      } else if (e.shiftKey && !e.deltaX) {
+        e.preventDefault();
+        el.scrollLeft += e.deltaY;
+      }
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+  // Keep the moment under the pointer in place after a wheel zoom.
+  useLayoutEffect(() => {
+    const a = anchor.current;
+    if (!a) return;
+    anchor.current = null;
+    scroller.current.scrollLeft = Math.max(0, LABEL + a.t * zoom - a.x);
+  }, [zoom]);
+
+  /** Hand tool (H) or middle mouse button: drag to pan. Razor tool (B): click a clip to cut it there. */
+  const onToolPointerDown = (e) => {
+    if (e.target.closest(".ruler")) return;
+    if (e.button === 1 || (tool === "hand" && e.button === 0)) {
+      e.preventDefault();
+      e.stopPropagation();
+      const el = scroller.current;
+      const x0 = e.clientX, y0 = e.clientY, sl = el.scrollLeft, st = el.scrollTop;
+      el.classList.add("panning");
+      const move = (ev) => { el.scrollLeft = sl - (ev.clientX - x0); el.scrollTop = st - (ev.clientY - y0); };
+      const up = () => { el.classList.remove("panning"); window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+      return;
+    }
+    if (tool === "razor" && e.button === 0) {
+      const seg = e.target.closest("[data-kind]");
+      if (!seg || seg.dataset.kind === "transition") return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (getState().playing) pause();
+      splitItemAt(seg.dataset.kind, seg.dataset.id, timeAt(e.clientX));
+    }
   };
 
   const scrub = (e) => {
@@ -306,12 +362,15 @@ export function Timeline() {
       <button onClick=${() => freezeFrame()} title="Freeze the frame under the playhead (F)">❄ Freeze</button>
       <button onClick=${() => addText()}>T Add text</button>
       <span class="spacer"></span>
+      <button class=${tool === "razor" ? "chip on" : "chip"} onClick=${() => setState({ tool: tool === "razor" ? null : "razor" })} title="Razor: click a clip to cut it (B)">🔪 Razor</button>
+      <button class=${tool === "hand" ? "chip on" : "chip"} onClick=${() => setState({ tool: tool === "hand" ? null : "hand" })} title="Hand: drag to pan the timeline (H, or middle mouse button)">✋ Pan</button>
       <button class=${snap ? "chip on" : "chip"} onClick=${() => setState({ snap: !snap })} title="Magnetic snapping (N)">🧲 Snap</button>
-      <span class="muted">Zoom</span>
+      <span class="muted" title="Ctrl + mouse wheel also zooms">Zoom</span>
       <input type="range" min="10" max="300" value=${zoom} onChange=${(e) => setState({ zoom: +e.target.value })} />
     </div>
-    <div class="tl-scroll" ref=${scroller}>
-      <div class="tl-inner" ref=${inner} style=${{ width: LABEL + total * zoom }} onPointerDown=${onTracksPointerDown}>
+    <div class=${"tl-scroll" + (tool ? " tool-" + tool : "")} ref=${scroller}>
+      <div class="tl-inner" ref=${inner} style=${{ width: LABEL + total * zoom }} onPointerDownCapture=${onToolPointerDown} onPointerDown=${onTracksPointerDown}
+        onAuxClick=${(e) => e.button === 1 && e.preventDefault()}>
         <div class="ruler" onPointerDown=${(e) => { e.stopPropagation(); scrub(e); }}>
           ${ticks.map((s) => html`<div class="tick" key=${s} style=${{ left: LABEL + s * zoom }}>${fmt(s).slice(0, 5)}</div>`)}
         </div>

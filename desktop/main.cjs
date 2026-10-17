@@ -1,6 +1,6 @@
 // Cutline desktop app (Electron). Serves the editor from inside the app on 127.0.0.1 and shows it in
 // a window, so it runs on Electron's built-in Chromium (WebCodecs + WebGL2) without Node.js or Chrome.
-const { app, BrowserWindow, shell, ipcMain, dialog } = require("electron");
+const { app, BrowserWindow, shell, ipcMain, dialog, Menu } = require("electron");
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -111,6 +111,11 @@ async function createWindow() {
     webPreferences: { contextIsolation: true, sandbox: true, preload: path.join(__dirname, "preload.cjs") },
   });
   win.once("ready-to-show", () => win.show());
+  win.webContents.setVisualZoomLevelLimits(1, 1); // no pinch-zoom of the whole window
+  // With no menu on Windows/Linux, keep the developer tools reachable with Ctrl+Shift+I / F12.
+  win.webContents.on("before-input-event", (e, input) => {
+    if (input.type === "keyDown" && (input.key === "F12" || (input.control && input.shift && input.key.toLowerCase() === "i"))) win.webContents.toggleDevTools();
+  });
   // Links to other sites open in the normal browser, not inside the editor.
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/.test(url) && !url.startsWith(`http://127.0.0.1:${port}/`)) shell.openExternal(url);
@@ -135,7 +140,14 @@ async function createWindow() {
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on("second-instance", () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
-  app.whenReady().then(createWindow);
+  app.whenReady().then(() => {
+    // The editor has its own shortcuts (Ctrl+= zooms the timeline, not the page). macOS keeps a minimal
+    // menu so Cmd+C/V/X/A/Q still work in text boxes.
+    Menu.setApplicationMenu(process.platform === "darwin"
+      ? Menu.buildFromTemplate([{ role: "appMenu" }, { role: "editMenu" }, { role: "windowMenu" }])
+      : null);
+    createWindow();
+  });
   app.on("activate", () => { if (!win && app.isReady()) createWindow(); }); // macOS dock click
   app.on("window-all-closed", () => app.quit());
 }

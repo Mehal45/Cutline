@@ -75,18 +75,26 @@ npm run dist:mac     # build the Mac .dmg (run this on a Mac)
 
 ### Shortcuts
 
+Press **?** in the app for the full list. On a Mac, use ⌘ where it says Ctrl.
+
 | Keys | Action |
 |---|---|
 | Space | Play / pause |
+| ← → (Shift: 1 s) · Home / End | Step a frame · jump to start / end |
+| Ctrl + mouse wheel | Zoom the timeline around the pointer (trackpad pinch too) |
+| Shift + mouse wheel | Scroll the timeline sideways |
+| + / − · Ctrl+= / Ctrl+− · Ctrl+0 | Zoom the timeline in / out · reset zoom |
+| S | Split the selection (or the main clip) at the playhead |
+| Ctrl+B | Split everything under the playhead |
+| B | Razor tool: click a clip to cut it there |
+| H · middle mouse drag | Hand tool: drag to pan the timeline |
+| Delete · Shift+Delete · Esc | Delete · ripple delete · clear selection (or leave a tool) |
+| M · F · N · G | Mute · freeze frame · snapping · preview guides |
 | Ctrl+Z · Ctrl+Y (or Ctrl+Shift+Z) | Undo · redo |
 | Ctrl+C · Ctrl+X · Ctrl+V | Copy · cut · paste at the playhead |
 | Ctrl+D · Ctrl+A | Duplicate · select all |
-| S or Ctrl+B | Split at the playhead |
-| Delete · Shift+Delete · Esc | Delete · ripple delete · clear selection |
-| F · N | Freeze frame · snapping on/off |
-| Ctrl+S · Ctrl+Shift+S · Ctrl+O · Ctrl+E | Save · save as · open · export |
-| ← → (Shift: 1 s) · Home / End | Step a frame · jump to start / end |
-| + / − · ? | Zoom the timeline · show the shortcut list |
+| Ctrl+I · Ctrl+E | Import media · export |
+| Ctrl+S · Ctrl+Shift+S · Ctrl+O · Ctrl+W · Ctrl+Q | Save · save as · open · close project · quit |
 
 ## Files
 

@@ -9,7 +9,7 @@ import {
 import {
   clock, play, pause, togglePlay, seek, toast, importFiles, addMediaToTimeline, splitAtPlayhead, deleteSelection,
   rippleDelete, selectAll, copySelection, cutSelection, paste, duplicateSelection, applyTransition, freezeFrame,
-  localTime,
+  localTime, splitAllAtPlayhead, toggleMute, zoomTimeline,
 } from "./actions.js";
 import { hasKeys, setKey, setStatic } from "./keyframes.js";
 import { exportMp4, exportWav, exportFrame, supportedCodecs, VIDEO_CODECS, QUALITY, bitrateFor } from "./export.js";
@@ -241,6 +241,7 @@ function TransformOverlay({ rect }) {
   const time = useStore((s) => s.time);
   const selection = useStore((s) => s.selection);
   const guides = useStore((s) => s.guides);
+  const axis = useStore((s) => s.axis);
   const ref = useRef();
   const W = project.width, H = project.height;
   const visible = visibleItems(project, time);
@@ -316,6 +317,9 @@ function TransformOverlay({ rect }) {
       style=${{ left: rect.left, top: rect.top, width: rect.width, height: rect.height }}>
     ${guides?.v && html`<div class="guide v" />`}
     ${guides?.h && html`<div class="guide h" />`}
+    ${axis && html`<div class="axis"><i class="v" style=${{ left: "33.33%" }} /><i class="v" style=${{ left: "66.66%" }} />
+      <i class="h" style=${{ top: "33.33%" }} /><i class="h" style=${{ top: "66.66%" }} />
+      <i class="v c" style=${{ left: "50%" }} /><i class="h c" style=${{ top: "50%" }} /><b /></div>`}
     ${selectedVisible.map(({ kind, item }) => {
       const b = bounds(kind, item);
       if (!b) return null;
@@ -351,7 +355,12 @@ const SHORTCUTS = [
   ["Ctrl+C / Ctrl+X / Ctrl+V", "Copy / cut / paste at playhead"],
   ["Ctrl+D", "Duplicate selection"],
   ["Ctrl+A", "Select all"],
-  ["S / Ctrl+B", "Split at playhead"],
+  ["S", "Split the selection (or the main clip) at the playhead"],
+  ["Ctrl+B", "Split everything under the playhead"],
+  ["B", "Razor tool: click a clip to cut it there"],
+  ["H / middle mouse drag", "Hand tool: drag to pan the timeline"],
+  ["M", "Mute / unmute the selection"],
+  ["G", "Show / hide the preview axis and safe-area guides"],
   ["Delete / Backspace", "Delete selection"],
   ["Shift+Delete", "Ripple delete (close the gap)"],
   ["F", "Freeze frame"],
@@ -362,7 +371,12 @@ const SHORTCUTS = [
   ["Esc", "Clear selection"],
   ["← / →", "Step one frame (Shift: 1 second)"],
   ["Home / End", "Go to start / end"],
-  ["+ / −", "Zoom timeline"],
+  ["Ctrl + mouse wheel", "Zoom the timeline around the pointer (trackpad pinch too)"],
+  ["Shift + mouse wheel", "Scroll the timeline sideways"],
+  ["+ / − · Ctrl+= / Ctrl+− · Ctrl+0", "Zoom timeline in / out · reset zoom"],
+  ["Ctrl+I", "Import media"],
+  ["Ctrl+W", "Close project (start a new one)"],
+  ["Ctrl+Q", "Quit (desktop app)"],
   ["Shift/Ctrl + click", "Add to selection"],
   ["Drag empty timeline", "Box-select"],
   ["Drag in preview", "Move · corners resize · top handle rotates"],
@@ -557,17 +571,28 @@ function useShortcuts(openShortcuts, openExport) {
         if (key === "v") return run(paste);
         if (key === "d") return run(duplicateSelection);
         if (key === "a") return run(selectAll);
-        if (key === "b") return run(splitAtPlayhead);
+        if (key === "b") return run(splitAllAtPlayhead);
         if (key === "e") return run(openExport);
+        if (key === "i" && !e.shiftKey) return run(() => document.getElementById("import-any")?.click());
+        if (key === "w") return run(newProject);
+        if (key === "q") return run(() => (desktop ? window.close() : toast("Close the browser tab to quit")));
+        if (key === "=" || key === "+") return run(() => zoomTimeline(1.25));
+        if (key === "-" || key === "_") return run(() => zoomTimeline(1 / 1.25));
+        if (key === "0") return run(() => setState({ zoom: 80 }));
         return;
       }
+      if (e.altKey) return;
       if (e.code === "Space") return run(togglePlay);
       if (key === "s") return run(splitAtPlayhead);
+      if (key === "b") return run(() => { const on = getState().tool !== "razor"; setState({ tool: on ? "razor" : null }); toast(on ? "Razor: click a clip to cut it (B to exit)" : "Razor off"); });
+      if (key === "h") return run(() => { const on = getState().tool !== "hand"; setState({ tool: on ? "hand" : null }); toast(on ? "Hand: drag the timeline to pan (H to exit)" : "Hand off"); });
+      if (key === "m") return run(toggleMute);
+      if (key === "g") return run(() => setState({ axis: !getState().axis }));
       if (key === "f") return run(() => freezeFrame());
       if (key === "n") return run(() => { setState({ snap: !getState().snap }); toast(getState().snap ? "Snapping on" : "Snapping off"); });
       if ((key === "delete" || key === "backspace") && e.shiftKey) return run(rippleDelete);
       if (key === "delete" || key === "backspace") return run(deleteSelection);
-      if (key === "escape") return run(() => select([]));
+      if (key === "escape") return run(() => { if (getState().tool) setState({ tool: null }); else select([]); });
       if (key === "arrowleft") return run(() => seek(getState().time - (e.shiftKey ? 1 : 1 / fps)));
       if (key === "arrowright") return run(() => seek(getState().time + (e.shiftKey ? 1 : 1 / fps)));
       if (key === "home") return run(() => seek(0));
@@ -585,7 +610,14 @@ function App() {
   const [dialog, setDialog] = useState(null);
   const timelineH = useStore((s) => s.timelineH);
   useShortcuts(() => setDialog("shortcuts"), () => setDialog("export"));
-  useEffect(() => { linkWebFonts(); startAutosave(); }, []);
+  useEffect(() => {
+    linkWebFonts();
+    startAutosave();
+    // Ctrl + wheel belongs to the timeline; never zoom the whole page.
+    const noPageZoom = (e) => { if (e.ctrlKey || e.metaKey) e.preventDefault(); };
+    window.addEventListener("wheel", noPageZoom, { passive: false });
+    return () => window.removeEventListener("wheel", noPageZoom);
+  }, []);
   return html`<div class="app" style=${{ gridTemplateRows: `48px auto 1fr ${timelineH}px` }}>
     <${Header} onCaptions=${() => setDialog("captions")} onExport=${() => setDialog("export")} onShortcuts=${() => setDialog("shortcuts")} />
     <div><${RecoveryBar} /><${RelinkBar} /></div>
@@ -596,6 +628,8 @@ function App() {
     </main>
     <${Timeline} />
     <${Toast} />
+    <input id="import-any" type="file" multiple accept="video/*,image/*,audio/*" hidden
+      onChange=${(e) => { importFiles([...e.target.files]); e.target.value = ""; }} />
     ${dialog === "captions" && html`<${CaptionsDialog} onClose=${() => setDialog(null)} />`}
     ${dialog === "export" && html`<${ExportDialog} onClose=${() => setDialog(null)} />`}
     ${dialog === "shortcuts" && html`<${ShortcutsDialog} onClose=${() => setDialog(null)} />`}
