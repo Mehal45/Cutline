@@ -263,6 +263,10 @@
     .source-add { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-top: 1px solid var(--line); }
     .player.previewing { grid-template-rows: 1fr; }
     .player.previewing > .stage, .player.previewing > .transport { display: none; }
+    .seg .film { position: absolute; top: 0; height: 100%; pointer-events: none; }
+    .seg .label { position: relative; z-index: 1; background: rgba(0,0,0,.55); padding: 1px 6px; border-radius: 4px; }
+    .seg .speed-badge, .seg .badge, .seg .kmark, .seg .handle { z-index: 2; }
+    .seg .badge { position: relative; background: rgba(0,0,0,.5); padding: 0 4px; border-radius: 4px; }
   </style>
 </head>
 <body>
