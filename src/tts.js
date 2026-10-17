@@ -44,7 +44,7 @@ export function speak(text, { voice = "af_heart", speed = 1 } = {}) {
       if (data.type === "error") { status = "failed"; return reject(new Error(data.message)); }
       status = "ready";
       const name = `Voice - ${text.trim().slice(0, 28).replace(/[\/:*?"<>|]/g, "")}${text.length > 28 ? "…" : ""}.wav`;
-      await importFiles([new File([wav(data.pcm, data.rate)], name, { type: "audio/wav" })]);
+      await importFiles([new File([wav(data.pcm, data.rate)], name, { type: "audio/wav" })], { addToTimeline: true });
       toast("Voice-over added at the playhead");
       resolve();
     };

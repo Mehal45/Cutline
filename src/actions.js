@@ -17,6 +17,7 @@ export function play() {
   const t = s.time >= projectDuration(s.project) - 0.05 ? 0 : s.time;
   Object.assign(clock, { startT: t, startNow: performance.now() });
   resumeLive();
+  if (s.preview) closePreview();
   setState({ playing: true, time: t });
 }
 
@@ -28,6 +29,7 @@ export function pause() {
 export const togglePlay = () => (getState().playing ? pause() : play());
 
 export function seek(t) {
+  if (getState().preview) closePreview();
   const time = Math.max(0, Math.min(projectDuration(getState().project), t));
   Object.assign(clock, { startT: time, startNow: performance.now() });
   setState({ time });
@@ -75,8 +77,11 @@ function probe(kind, url) {
   });
 }
 
-/** Adds files to the media pool. Video and images also go on the main track, audio on an audio track. */
-export async function importFiles(files, { addToTimeline = true } = {}) {
+/**
+ * Adds files to the media library. By default they only go to the library (preview them there, then add
+ * them); `addToTimeline` also puts video/pictures on the main track and audio on an audio track.
+ */
+export async function importFiles(files, { addToTimeline = false } = {}) {
   const added = [];
   for (const file of files) {
     const kind = kindOf(file);
@@ -94,38 +99,77 @@ export async function importFiles(files, { addToTimeline = true } = {}) {
         p.audio.push({ id: uid(), mediaId: id, track: freeTrack(p.audio, start, meta.duration), start, in: 0, dur: meta.duration });
         return;
       }
-      if (p.main.length === 0 && meta.w && meta.h) {
-        // First clip sets the canvas aspect, like most editors do.
-        const r = meta.w / meta.h;
-        Object.assign(p, r > 1.2 ? { width: 1920, height: 1080 } : r < 0.85 ? { width: 1080, height: 1920 } : { width: 1080, height: 1080 });
-      }
+      setCanvasFromFirstClip(p, meta);
       p.main.push(newClip(id, meta.duration));
     });
     added.push(id);
   }
+  if (added.length && !addToTimeline) toast(`${added.length} file${added.length > 1 ? "s" : ""} added to the library — click to preview, then add to the timeline`);
   return added;
 }
 
-/** Puts a media item on the main track (default), as an overlay layer at the playhead, or on an audio track. */
-export function addMediaToTimeline(media, where) {
+/** The first clip on an empty main track sets the canvas aspect, like most editors do (mutates). */
+function setCanvasFromFirstClip(p, media) {
+  if (p.main.length || !media.w || !media.h) return;
+  const r = media.w / media.h;
+  Object.assign(p, r > 1.2 ? { width: 1920, height: 1080 } : r < 0.85 ? { width: 1080, height: 1920 } : { width: 1080, height: 1080 });
+}
+
+// ---------------- library preview (source viewer) ----------------
+
+/** Shows a library item in the viewer instead of the timeline. */
+export function openPreview(mediaId) {
+  if (getState().playing) pause();
+  setState({ preview: { mediaId, in: null, out: null } });
+}
+
+export function closePreview() {
+  setState({ preview: null });
+}
+
+/** The marked In/Out range of the previewed item, in source seconds (whole file when unmarked). */
+export function previewRange(media) {
+  const pv = getState().preview;
+  const a = pv?.mediaId === media.id && pv.in != null ? pv.in : 0;
+  const b = pv?.mediaId === media.id && pv.out != null ? pv.out : media.duration;
+  return b - a > 0.05 ? { in: a, dur: b - a } : { in: 0, dur: media.duration };
+}
+
+/**
+ * Puts a media item on the timeline: the main track (default for video/pictures, appended at the end, or
+ * at `opts.index`), as an overlay layer, or on an audio track (at `opts.time`, default the playhead).
+ * Uses the In/Out range marked in the preview, if any.
+ */
+export function addMediaToTimeline(media, where, opts = {}) {
+  if (media.missing) return toast("That file is missing — relink it first");
   where ??= media.kind === "audio" ? "audio" : "main";
-  if (where === "main") {
-    if (media.kind === "audio") return toast("Audio goes on an audio track");
-    return edit((p) => p.main.push(newClip(media.id, media.duration)));
-  }
-  const start = getState().time;
+  if (where === "main" && media.kind === "audio") where = "audio";
+  if (where === "overlay" && media.kind === "audio") where = "audio";
+  const range = opts.range || previewRange(media);
   const id = uid();
-  if (where === "overlay") {
-    if (media.kind === "audio") return toast("Audio can't be a picture layer");
-    edit((p) => p.overlays.push({
-      id, mediaId: media.id, track: freeTrack(p.overlays, start, media.duration), start, in: 0, dur: media.duration,
-      anim: noAnim(), transform: { x: 0.5, y: 0.5, scale: 0.45, rotation: 0 },
-    }));
-    setState({ selection: [{ kind: "overlay", id }] });
+  if (where === "main") {
+    edit((p) => {
+      setCanvasFromFirstClip(p, media);
+      const clip = { ...newClip(media.id, range.dur), id, in: range.in };
+      const at = opts.index == null ? p.main.length : Math.max(0, Math.min(p.main.length, opts.index));
+      p.main.splice(at, 0, clip);
+    });
+    setState({ selection: [{ kind: "main", id }] });
   } else {
-    edit((p) => p.audio.push({ id, mediaId: media.id, track: freeTrack(p.audio, start, media.duration), start, in: 0, dur: media.duration }));
-    setState({ selection: [{ kind: "audio", id }] });
+    const start = Math.max(0, opts.time ?? getState().time);
+    const lane = where === "overlay" ? "overlays" : "audio";
+    edit((p) => {
+      const track = opts.track != null
+        ? (p[lane].some((x) => (x.track ?? 0) === opts.track && x.start < start + range.dur && x.start + x.dur > start) ? freeTrack(p[lane], start, range.dur) : opts.track)
+        : freeTrack(p[lane], start, range.dur);
+      const item = { id, mediaId: media.id, track, start, in: range.in, dur: range.dur };
+      if (where === "overlay") Object.assign(item, { anim: noAnim(), transform: { x: 0.5, y: 0.5, scale: 0.45, rotation: 0 } });
+      p[lane].push(item);
+    });
+    setState({ selection: [{ kind: where === "overlay" ? "overlay" : "audio", id }] });
   }
+  if (getState().preview) closePreview();
+  toast(where === "main" ? "Added to the main track" : where === "overlay" ? "Added as a layer at the playhead" : "Added to an audio track");
 }
 
 export function addText(preset = {}) {
@@ -270,7 +314,19 @@ export function toggleMute() {
 
 /** Zooms the timeline by a factor (keyboard shortcuts). */
 export function zoomTimeline(factor) {
-  setState({ zoom: Math.max(10, Math.min(300, getState().zoom * factor)) });
+  setState({ zoom: clampZoom(getState().zoom * factor) });
+}
+
+/** Timeline zoom limits in pixels per second: from about 2 hours on screen down to frame-level detail. */
+export const ZOOM_MIN = 0.15, ZOOM_MAX = 400;
+export const clampZoom = (z) => Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
+
+/** Zooms so the whole project fits the visible timeline width. */
+export function zoomToFit() {
+  const el = document.querySelector(".tl-scroll");
+  const dur = Math.max(1, projectDuration(getState().project));
+  setState({ zoom: clampZoom(((el?.clientWidth || 1200) - 70 - 40) / dur) });
+  if (el) el.scrollLeft = 0;
 }
 
 export function deleteSelection() {

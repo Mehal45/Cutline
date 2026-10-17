@@ -9,8 +9,9 @@ import {
 import {
   clock, play, pause, togglePlay, seek, toast, importFiles, addMediaToTimeline, splitAtPlayhead, deleteSelection,
   rippleDelete, selectAll, copySelection, cutSelection, paste, duplicateSelection, applyTransition, freezeFrame,
-  localTime, splitAllAtPlayhead, toggleMute, zoomTimeline,
+  localTime, splitAllAtPlayhead, toggleMute, zoomTimeline, openPreview, closePreview, zoomToFit,
 } from "./actions.js";
+import { SourceViewer, toggleSource, stepSource, markSource, addFromSource } from "./ui/source.js";
 import { hasKeys, setKey, setStatic } from "./keyframes.js";
 import { exportMp4, exportWav, exportFrame, supportedCodecs, VIDEO_CODECS, QUALITY, bitrateFor } from "./export.js";
 import { transcribe, wordsToCaptions, CAPTION_MODELS } from "./captions.js";
@@ -129,27 +130,34 @@ function LeftPanel() {
 
 function MediaTab() {
   const media = useStore((s) => s.project.media);
+  const previewing = useStore((s) => s.preview?.mediaId);
   const input = useRef();
   const [drag, setDrag] = useState(false);
   return html`<div
-      onDragOver=${(e) => { e.preventDefault(); setDrag(true); }}
+      onDragOver=${(e) => { if ([...e.dataTransfer.types].includes("Files")) { e.preventDefault(); setDrag(true); } }}
       onDragLeave=${() => setDrag(false)}
-      onDrop=${(e) => { e.preventDefault(); setDrag(false); importFiles([...e.dataTransfer.files]); }}>
+      onDrop=${(e) => { if (!e.dataTransfer.files.length) return; e.preventDefault(); setDrag(false); importFiles([...e.dataTransfer.files]); }}>
     <button class="primary wide" onClick=${() => input.current.click()}>+ Import</button>
     <input ref=${input} type="file" multiple accept="video/*,image/*,audio/*" hidden
       onChange=${(e) => { importFiles([...e.target.files]); e.target.value = ""; }} />
     <div class=${"drop" + (drag ? " on" : "")}>or drop files here</div>
+    ${Object.keys(media).length > 0 && html`<p class="muted">Click to preview · double-click or ＋ to add · drag onto the timeline</p>`}
     <div class="media-list">
-      ${Object.values(media).map((m) => html`<div class=${"media-item" + (m.missing ? " missing" : "")} key=${m.id}
-          title=${m.missing ? "File not found — use File › Open again or relink" : m.kind === "audio" ? "Click to add to an audio track" : "Click to add to the main track"}
-          onClick=${() => !m.missing && addMediaToTimeline(m)}>
-        ${m.kind === "image" ? html`<img src=${m.url} />`
+      ${Object.values(media).map((m) => html`<div class=${"media-item" + (m.missing ? " missing" : "") + (previewing === m.id ? " active" : "")} key=${m.id}
+          title=${m.missing ? "File not found — use File › Open again or relink" : "Click to preview in the viewer · double-click to add to the timeline · or drag it onto the timeline"}
+          draggable=${!m.missing}
+          onDragStart=${(e) => { e.dataTransfer.setData("text/x-cutline-media", m.id); e.dataTransfer.effectAllowed = "copy"; }}
+          onClick=${() => !m.missing && openPreview(m.id)}
+          onDoubleClick=${() => !m.missing && addMediaToTimeline(m)}>
+        ${m.kind === "image" ? html`<img src=${m.url} draggable="false" />`
           : m.kind === "audio" ? html`<div class="audio-thumb">♪</div>`
           : html`<video src=${m.url ? m.url + "#t=0.5" : ""} muted preload="metadata" />`}
         <span>${m.name}</span>
         <small>${m.missing ? "missing" : fmt(m.duration)}
+          ${!m.missing && html`<button class="mini add" title=${m.kind === "audio" ? "Add to an audio track at the playhead" : "Add to the end of the main track"}
+            onClick=${(e) => { e.stopPropagation(); addMediaToTimeline(m); }}>＋ Add</button>`}
           ${!m.missing && m.kind !== "audio" && html`<button class="mini add" title="Add as a picture-in-picture layer at the playhead"
-            onClick=${(e) => { e.stopPropagation(); addMediaToTimeline(m, "overlay"); }}>+ Layer</button>`}
+            onClick=${(e) => { e.stopPropagation(); addMediaToTimeline(m, "overlay"); }}>＋ Layer</button>`}
         </small>
       </div>`)}
     </div>
@@ -198,7 +206,9 @@ function Player() {
     return () => ro.disconnect();
   }, [previewW, previewH]);
 
-  return html`<section class="player">
+  const previewing = useStore((s) => !!s.preview);
+  return html`<section class=${"player" + (previewing ? " previewing" : "")}>
+    ${previewing && html`<${SourceViewer} />`}
     <div class="stage" ref=${stage}>
       <canvas ref=${canvas} width=${previewW} height=${previewH} />
       ${rect && html`<${TransformOverlay} rect=${rect} />`}
@@ -374,7 +384,10 @@ const SHORTCUTS = [
   ["Ctrl + mouse wheel", "Zoom the timeline around the pointer (trackpad pinch too)"],
   ["Shift + mouse wheel", "Scroll the timeline sideways"],
   ["+ / − · Ctrl+= / Ctrl+− · Ctrl+0", "Zoom timeline in / out · reset zoom"],
-  ["Ctrl+I", "Import media"],
+  ["Shift+Z", "Fit the whole project in the timeline"],
+  ["Ctrl+I", "Import media (to the library)"],
+  ["Click a library item", "Preview it in the viewer (Space play · I / O mark in/out · Enter add · Esc back)"],
+  ["Double-click / drag a library item", "Add it to the timeline / drop it where you want it"],
   ["Ctrl+W", "Close project (start a new one)"],
   ["Ctrl+Q", "Quit (desktop app)"],
   ["Shift/Ctrl + click", "Add to selection"],
@@ -563,6 +576,16 @@ function useShortcuts(openShortcuts, openExport) {
       }
       const fps = getState().project.fps;
       const run = (fn) => { e.preventDefault(); fn(); };
+      // While a library item is previewing, playback keys drive the preview.
+      if (getState().preview && !mod) {
+        if (e.code === "Space") return run(toggleSource);
+        if (key === "arrowleft") return run(() => stepSource(e.shiftKey ? -1 : -1 / fps));
+        if (key === "arrowright") return run(() => stepSource(e.shiftKey ? 1 : 1 / fps));
+        if (key === "i") return run(() => markSource("in"));
+        if (key === "o") return run(() => markSource("out"));
+        if (key === "enter") return run(() => addFromSource());
+        if (key === "escape") return run(closePreview);
+      }
       if (mod) {
         if (key === "z") return run(e.shiftKey ? redo : undo);
         if (key === "y") return run(redo);
@@ -597,8 +620,9 @@ function useShortcuts(openShortcuts, openExport) {
       if (key === "arrowright") return run(() => seek(getState().time + (e.shiftKey ? 1 : 1 / fps)));
       if (key === "home") return run(() => seek(0));
       if (key === "end") return run(() => seek(projectDuration(getState().project)));
-      if (key === "+" || key === "=") return run(() => setState({ zoom: Math.min(300, getState().zoom * 1.25) }));
-      if (key === "-" || key === "_") return run(() => setState({ zoom: Math.max(10, getState().zoom / 1.25) }));
+      if (key === "+" || key === "=") return run(() => zoomTimeline(1.25));
+      if (key === "-" || key === "_") return run(() => zoomTimeline(1 / 1.25));
+      if (key === "z" && e.shiftKey) return run(zoomToFit);
       if (key === "?") return run(openShortcuts);
     };
     window.addEventListener("keydown", onKey);

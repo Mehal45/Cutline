@@ -111,10 +111,10 @@ export function AudioTab() {
     setBusy(false);
   };
   return html`<div>
-    <button class="primary wide" onClick=${() => input.current.click()}>+ Add music or sound</button>
+    <button class="primary wide" onClick=${() => input.current.click()}>+ Import music or sound</button>
     <input ref=${input} type="file" multiple accept="audio/*" hidden
       onChange=${(e) => { importFiles([...e.target.files]); e.target.value = ""; }} />
-    <p class="muted">Audio goes on its own track at the playhead. Select it to change volume, fades, cleanup and voice effects.</p>
+    <p class="muted">Sounds go to the library (Media tab): click one to listen, then add it to an audio track. Select it on the timeline to change volume, fades, cleanup and voice effects.</p>
     <h3 style=${{ marginTop: "16px" }}>Text to speech</h3>
     <p class="muted">Natural voices generated on your computer (Kokoro). The voice model (~90 MB) downloads once.</p>
     <textarea rows="4" placeholder=${selectedText ? `Leave empty to read the selected text: "${selectedText.slice(0, 40)}"` : "What should the voice say?"}
