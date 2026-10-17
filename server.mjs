@@ -18,6 +18,10 @@ const types = {
   ".svg": "image/svg+xml",
   ".png": "image/png",
   ".ico": "image/x-icon",
+  ".mp4": "video/mp4",
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".webm": "video/webm",
 };
 
 /** Opens the editor, preferring Chrome or Edge (they support WebCodecs video export). */

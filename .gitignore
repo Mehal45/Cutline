@@ -1,4 +1,5 @@
 node_modules/
 dist/
+testmedia/
 .DS_Store
 Thumbs.db

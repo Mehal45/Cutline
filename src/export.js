@@ -1,47 +1,76 @@
 // Offline audio mix + frame-by-frame MP4 export with WebCodecs.
 import { Muxer, ArrayBufferTarget } from "mp4-muxer";
 import { layoutMain, projectDuration } from "./store.js";
-import { drawFrame, renderLock, clipSpeed, activeClips, exportFrames, seekClipElement } from "./engine.js";
+import {
+  drawFrame, renderLock, clipSpeed, activeClips, activeOverlays, exportFrames, seekClipElement, volumeAt,
+} from "./engine.js";
 import { demux, SegmentDecoder } from "./decode.js";
+import { buildChain, needsChain, prepareContext, loudnessGain } from "./audiofx.js";
+import { decodeMedia } from "./media-audio.js";
+import { loadCutout } from "./segment.js";
+import { hasKeys } from "./keyframes.js";
 
-const decoded = new Map(); // mediaId -> AudioBuffer | null
-
-async function decodeMedia(media) {
-  if (decoded.has(media.id)) return decoded.get(media.id);
-  let buf = null;
-  if (media.kind === "video") {
-    try {
-      const ctx = new AudioContext();
-      buf = await ctx.decodeAudioData(await media.file.arrayBuffer());
-      ctx.close();
-    } catch {
-      buf = null; // silent video
-    }
-  }
-  decoded.set(media.id, buf);
-  return buf;
+/** Every piece of timeline audio: { item, start, buf-source media } — main clips, overlay layers, audio items. */
+function audioSources(project) {
+  const out = [];
+  for (const seg of layoutMain(project)) out.push({ item: seg, start: seg.start, main: true });
+  for (const o of project.overlays || []) out.push({ item: o, start: o.start });
+  for (const a of project.audio || []) out.push({ item: a, start: a.start });
+  return out.filter((s) => !s.item.mute);
 }
 
-/** Mixes the main-track audio into one AudioBuffer at `sampleRate` with `channels`. */
+/** Whether an item's volume is anything other than a constant 100%. */
+const shapedVolume = (item) => {
+  const au = item.audio || {};
+  return (au.volume ?? 1) !== 1 || au.fadeIn > 0 || au.fadeOut > 0 || hasKeys(item, "volume");
+};
+
+/** Mixes all timeline audio into one AudioBuffer at `sampleRate` with `channels`. */
 export async function mixAudio(project, sampleRate = 48000, channels = 2) {
   const dur = Math.max(0.1, projectDuration(project));
   const ctx = new OfflineAudioContext(channels, Math.ceil(dur * sampleRate), sampleRate);
-  for (const seg of layoutMain(project)) {
-    const buf = await decodeMedia(project.media[seg.mediaId]);
+  const sources = audioSources(project);
+  if (sources.some((s) => needsChain(s.item.audio))) await prepareContext(ctx);
+  for (const { item, start } of sources) {
+    const media = project.media[item.mediaId];
+    if (!media) continue;
+    const buf = await decodeMedia(media);
     if (!buf) continue;
     const src = ctx.createBufferSource();
     src.buffer = buf;
     const gain = ctx.createGain();
-    // Short fades at cuts avoid clicks.
-    gain.gain.setValueAtTime(0, seg.start);
-    gain.gain.linearRampToValueAtTime(1, seg.start + 0.01);
-    gain.gain.setValueAtTime(1, Math.max(seg.start + 0.01, seg.start + seg.dur - 0.01));
-    gain.gain.linearRampToValueAtTime(0, seg.start + seg.dur);
-    src.connect(gain).connect(ctx.destination);
+    const end = start + item.dur;
+    if (!shapedVolume(item)) {
+      // Short fades at cuts avoid clicks.
+      gain.gain.setValueAtTime(0, start);
+      gain.gain.linearRampToValueAtTime(1, start + 0.01);
+      gain.gain.setValueAtTime(1, Math.max(start + 0.01, end - 0.01));
+      gain.gain.linearRampToValueAtTime(0, end);
+    } else {
+      // Volume keyframes and fades, sampled at 200 Hz, with the same anti-click ramps at the ends.
+      const n = Math.max(2, Math.ceil(item.dur * 200));
+      const curve = new Float32Array(n);
+      for (let i = 0; i < n; i++) {
+        const lt = (i / (n - 1)) * item.dur;
+        const edge = Math.min(1, lt / 0.01, (item.dur - lt) / 0.01);
+        curve[i] = Math.max(0, volumeAt(item, lt) * Math.max(0, edge));
+      }
+      gain.gain.setValueAtTime(0, 0);
+      gain.gain.setValueCurveAtTime(curve, start, Math.max(0.001, item.dur));
+    }
+    const speed = clipSpeed(item);
+    const level = item.audio?.normalize ? loudnessGain(buf, item.in || 0, (item.in || 0) + item.dur * speed) : 1;
+    src.connect(gain);
+    if (needsChain(item.audio) || level !== 1) {
+      const chain = buildChain(ctx, item.audio || {}, level);
+      gain.connect(chain.input);
+      chain.output.connect(ctx.destination);
+    } else {
+      gain.connect(ctx.destination);
+    }
     // Speed changes pitch in the offline mix (the live preview keeps pitch).
-    const speed = clipSpeed(seg);
     src.playbackRate.value = speed;
-    src.start(seg.start, seg.in, seg.dur * speed);
+    src.start(start, item.in || 0, item.dur * speed);
   }
   return ctx.startRendering();
 }
@@ -54,61 +83,96 @@ async function pickAudioCodec(sampleRate, numberOfChannels) {
   return null;
 }
 
-async function pickVideoCodec(width, height, fps) {
-  for (const codec of ["avc1.640033", "avc1.640028", "avc1.4d0028", "avc1.42001f"]) {
-    const cfg = { codec, width, height, bitrate: 8_000_000, framerate: fps };
-    if ((await VideoEncoder.isConfigSupported(cfg)).supported) return cfg;
+/** Video codecs offered in the export dialog, best-compatibility first. */
+export const VIDEO_CODECS = {
+  avc: { label: "H.264 (plays everywhere)", strings: ["avc1.640034", "avc1.640033", "avc1.640028", "avc1.4d0028", "avc1.42001f"] },
+  hevc: { label: "HEVC / H.265 (smaller files)", strings: ["hvc1.1.6.L153.B0", "hvc1.1.6.L150.B0", "hvc1.1.6.L123.B0", "hev1.1.6.L123.B0"] },
+  av1: { label: "AV1 (smallest, newer devices)", strings: ["av01.0.12M.08", "av01.0.08M.08", "av01.0.05M.08", "av01.0.04M.08"] },
+  vp9: { label: "VP9", strings: ["vp09.00.50.08", "vp09.00.41.08", "vp09.00.40.08", "vp09.00.31.08"] },
+};
+
+export const QUALITY = { high: { label: "High", bpp: 0.13 }, standard: { label: "Standard", bpp: 0.08 }, small: { label: "Small file", bpp: 0.045 } };
+
+export function bitrateFor(width, height, fps, quality = "high") {
+  return Math.round(Math.min(80e6, Math.max(1.5e6, width * height * fps * (QUALITY[quality]?.bpp ?? 0.13))));
+}
+
+async function pickVideoCodec(codec, width, height, fps, bitrate) {
+  for (const s of VIDEO_CODECS[codec].strings) {
+    const cfg = { codec: s, width, height, bitrate, framerate: fps };
+    try { if ((await VideoEncoder.isConfigSupported(cfg)).supported) return cfg; } catch { /* next */ }
   }
-  throw new Error("This browser cannot encode H.264 video. Try Chrome or Edge.");
+  return null;
+}
+
+/** Which codecs this computer can encode at a size (for the export dialog). */
+export async function supportedCodecs(width, height, fps) {
+  const out = {};
+  for (const k of Object.keys(VIDEO_CODECS)) out[k] = !!(await pickVideoCodec(k, width, height, fps, bitrateFor(width, height, fps)));
+  return out;
 }
 
 /**
  * Makes the frame for time t available to drawFrame: decoded VideoFrames where possible,
- * otherwise an exactly-seeked <video>. Decoders of clips that have ended are closed.
+ * otherwise an exactly-seeked <video>. Decoders of clips and layers that have ended are closed.
  */
 async function prepareFrame(project, t, decoders) {
-  const { clips } = activeClips(project, t);
-  const live = new Set(clips.map((c) => c.seg.id));
+  const visible = [
+    ...activeClips(project, t).clips.map((c) => ({ item: c.seg, sourceTime: c.sourceTime })),
+    ...activeOverlays(project, t).map((o) => ({ item: o.item, sourceTime: o.sourceTime })),
+  ];
+  const live = new Set(visible.map((c) => c.item.id));
   for (const [id, dec] of decoders) {
     if (!live.has(id)) { dec?.close(); decoders.delete(id); exportFrames.delete(id); }
   }
-  for (const c of clips) {
-    const media = project.media[c.seg.mediaId];
-    if (media.kind !== "video") { await seekClipElement(c.seg, media, 0); continue; }
-    if (!decoders.has(c.seg.id)) {
+  for (const c of visible) {
+    const media = project.media[c.item.mediaId];
+    if (!media || media.kind === "audio") continue;
+    if (media.kind !== "video") { await seekClipElement(c.item, media, 0); continue; }
+    if (!decoders.has(c.item.id)) {
       const d = await demux(media);
-      decoders.set(c.seg.id, d ? new SegmentDecoder(d, c.sourceTime) : null);
+      decoders.set(c.item.id, d ? new SegmentDecoder(d, c.sourceTime) : null);
     }
-    const dec = decoders.get(c.seg.id);
+    const dec = decoders.get(c.item.id);
     let frame = null;
     if (dec) {
       try {
         frame = await dec.frameAt(c.sourceTime);
       } catch {
         dec.close();
-        decoders.set(c.seg.id, null); // fall back to seeking for the rest of this clip
+        decoders.set(c.item.id, null); // fall back to seeking for the rest of this clip
       }
     }
-    if (frame) exportFrames.set(c.seg.id, frame);
+    if (frame) exportFrames.set(c.item.id, frame);
     else {
-      exportFrames.delete(c.seg.id);
-      await seekClipElement(c.seg, media, c.sourceTime);
+      exportFrames.delete(c.item.id);
+      await seekClipElement(c.item, media, c.sourceTime);
     }
   }
 }
 
-/** Renders the project to an MP4 Blob. `onProgress(0..1)` is called per frame. */
-export async function exportMp4(project, onProgress, signal) {
-  const { width, height, fps } = project;
+/**
+ * Renders the project to an MP4 Blob. `onProgress(0..1)` is called per frame.
+ * opts = { width, height, fps, codec: "avc"|"hevc"|"av1"|"vp9", quality } (defaults: project size, H.264, high).
+ */
+export async function exportMp4(project, onProgress, signal, opts = {}) {
+  const width = opts.width ?? project.width, height = opts.height ?? project.height, fps = opts.fps ?? project.fps;
   const duration = projectDuration(project);
   if (duration <= 0) throw new Error("Nothing to export — add a clip first.");
 
-  const vcfg = await pickVideoCodec(width, height, fps);
+  const codec = opts.codec ?? "avc";
+  const vcfg = await pickVideoCodec(codec, width, height, fps, bitrateFor(width, height, fps, opts.quality));
+  if (!vcfg) {
+    if (codec === "avc") throw new Error("This browser cannot encode H.264 video. Try Chrome or Edge.");
+    throw new Error(`This computer can't encode ${VIDEO_CODECS[codec].label.split(" (")[0]} at ${width}×${height}. Pick H.264 or a smaller size.`);
+  }
+  const usesCutout = [...project.main, ...(project.overlays || [])].some((x) => x.cutout?.mode);
+  if (usesCutout && !(await loadCutout())) throw new Error("Background removal couldn't load (check your internet connection).");
   const audio = await pickAudioCodec(48000, 2);
   const target = new ArrayBufferTarget();
   const muxer = new Muxer({
     target,
-    video: { codec: "avc", width, height, frameRate: fps },
+    video: { codec, width, height, frameRate: fps },
     audio: audio ? { codec: audio.muxCodec, numberOfChannels: 2, sampleRate: 48000 } : undefined,
     fastStart: "in-memory",
   });
@@ -125,7 +189,7 @@ export async function exportMp4(project, onProgress, signal) {
   const frames = Math.ceil(duration * fps);
   const mixPromise = audio ? mixAudio(project, 48000, 2) : null; // runs alongside the video encode
   mixPromise?.catch(() => {});
-  const decoders = new Map(); // segId -> SegmentDecoder | null (null = seek fallback)
+  const decoders = new Map(); // item id -> SegmentDecoder | null (null = seek fallback)
   renderLock.exporting = true;
   try {
     for (let i = 0; i < frames; i++) {
@@ -174,4 +238,41 @@ export async function exportMp4(project, onProgress, signal) {
   muxer.finalize();
   onProgress?.(1);
   return new Blob([target.buffer], { type: "video/mp4" });
+}
+
+/** The timeline's audio as a 16-bit stereo WAV file. */
+export async function exportWav(project) {
+  if (projectDuration(project) <= 0) throw new Error("Nothing to export — add a clip first.");
+  return wavBlob(await mixAudio(project, 48000, 2));
+}
+
+/** Encodes an AudioBuffer as a 16-bit PCM WAV Blob. */
+export function wavBlob(buf) {
+  const ch = buf.numberOfChannels, n = buf.length, sr = buf.sampleRate;
+  const data = new DataView(new ArrayBuffer(44 + n * ch * 2));
+  const str = (o, s) => [...s].forEach((c, i) => data.setUint8(o + i, c.charCodeAt(0)));
+  str(0, "RIFF"); data.setUint32(4, 36 + n * ch * 2, true); str(8, "WAVE");
+  str(12, "fmt "); data.setUint32(16, 16, true); data.setUint16(20, 1, true); data.setUint16(22, ch, true);
+  data.setUint32(24, sr, true); data.setUint32(28, sr * ch * 2, true); data.setUint16(32, ch * 2, true); data.setUint16(34, 16, true);
+  str(36, "data"); data.setUint32(40, n * ch * 2, true);
+  const chans = [...Array(ch)].map((_, i) => buf.getChannelData(i));
+  let o = 44;
+  for (let i = 0; i < n; i++) for (let c = 0; c < ch; c++) { data.setInt16(o, Math.max(-1, Math.min(1, chans[c][i])) * 0x7fff, true); o += 2; }
+  return new Blob([data.buffer], { type: "audio/wav" });
+}
+
+/** The frame at time t as a full-resolution PNG. */
+export async function exportFrame(project, t) {
+  const canvas = new OffscreenCanvas(project.width, project.height);
+  const decoders = new Map();
+  renderLock.exporting = true;
+  try {
+    await prepareFrame(project, t, decoders);
+    drawFrame(canvas.getContext("2d"), project, t);
+  } finally {
+    renderLock.exporting = false;
+    decoders.forEach((d) => d?.close());
+    exportFrames.clear();
+  }
+  return canvas.convertToBlob({ type: "image/png" });
 }

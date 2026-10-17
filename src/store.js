@@ -5,7 +5,12 @@
 //   media: { [id]: { id, name, kind: "video"|"image", url, file, duration, w, h } },
 //   main:  [ { id, mediaId, in, dur, anim: {in, out}, transition: {type, dur} | null } ]  // back-to-back
 //   texts: [ { id, start, dur, text, style, x, y, scale, anim: {in, out}, words? } ]
+//   overlays: [ { id, mediaId, track, start, in, dur, ...same visual props as a main clip } ]  // picture-in-picture layers
+//   audio:    [ { id, mediaId, track, start, in, dur, speed?, audio: {...} } ]                // music, voice-over, TTS
+//   effects:  [ { id, track, start, dur, type, amount } ]                                     // whole-frame effects
 // }
+// Optional props on clips/overlays/texts (absent = old behaviour): opacity, blend, crop, flipH, flipV,
+// adjust, filter, fx, chroma, cutout, keyframes, audio. See engine.js / fx.js / audiofx.js.
 import { useSyncExternalStore } from "react";
 
 export const uid = () => Math.random().toString(36).slice(2, 10);
@@ -22,7 +27,7 @@ export const defaultTextStyle = () => ({
 });
 
 const initial = {
-  project: { width: 1920, height: 1080, fps: 30, media: {}, main: [], texts: [] },
+  project: { width: 1920, height: 1080, fps: 30, media: {}, main: [], texts: [], overlays: [], audio: [], effects: [] },
   selection: [], // [{ kind: "main"|"text"|"transition", id }]
   time: 0,
   playing: false,
@@ -106,6 +111,9 @@ function structuredCloneProject(p) {
     media: { ...p.media },
     main: p.main.map((s) => structuredClone(s)),
     texts: p.texts.map((t) => structuredClone(t)),
+    overlays: (p.overlays || []).map((o) => structuredClone(o)),
+    audio: (p.audio || []).map((a) => structuredClone(a)),
+    effects: (p.effects || []).map((e) => structuredClone(e)),
   };
 }
 
@@ -130,6 +138,32 @@ export function layoutMain(project) {
 
 export function projectDuration(project) {
   const mainEnd = project.main.reduce((a, s) => a + s.dur, 0);
-  const textEnd = project.texts.reduce((a, t) => Math.max(a, t.start + t.dur), 0);
-  return Math.max(mainEnd, textEnd);
+  const end = (list) => (list || []).reduce((a, t) => Math.max(a, t.start + t.dur), 0);
+  return Math.max(mainEnd, end(project.texts), end(project.overlays), end(project.audio), end(project.effects));
+}
+
+/** Every timed item that isn't on the main track, by selection kind. */
+export const LANES = { text: "texts", overlay: "overlays", audio: "audio", effect: "effects" };
+
+/** Finds any item by selection kind + id. */
+export function findItem(project, kind, id) {
+  const list = kind === "main" || kind === "transition" ? project.main : project[LANES[kind]];
+  return list?.find((x) => x.id === id);
+}
+
+/** Lowest track index of `list` with nothing in [start, start + dur), so new items never overlap. */
+export function freeTrack(list, start, dur, skipId) {
+  for (let track = 0; ; track++) {
+    const busy = list.some((x) => x.id !== skipId && (x.track ?? 0) === track && x.start < start + dur - 1e-3 && x.start + x.dur > start + 1e-3);
+    if (!busy) return track;
+  }
+}
+
+/** Renumbers the tracks of overlays, audio and effects so no empty lanes are left between them (mutates). */
+export function compactTracks(p) {
+  for (const lane of ["overlays", "audio", "effects"]) {
+    const used = [...new Set((p[lane] || []).map((x) => x.track ?? 0))].sort((a, b) => a - b);
+    const map = new Map(used.map((t, i) => [t, i]));
+    for (const x of p[lane] || []) x.track = map.get(x.track ?? 0);
+  }
 }

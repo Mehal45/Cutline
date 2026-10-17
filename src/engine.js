@@ -1,6 +1,12 @@
 // Rendering engine: decides what is visible at time t and draws it.
-// Clips use Canvas 2D; transitions blend two clip frames in a WebGL shader.
+// Clips use Canvas 2D; transitions blend two clip frames in a WebGL shader; colour, filters and
+// effects run in fx.js. Layer order, bottom to top: main track → overlay tracks → timeline effects → texts.
 import { layoutMain } from "./store.js";
+import { valueAt, propAt } from "./keyframes.js";
+import { applyFx, hasFx, ADJUST } from "./fx.js";
+import { cutoutFrame } from "./segment.js";
+import { needsLiveRoute, routeLive, isRouted } from "./audiofx.js";
+import { levelFor } from "./media-audio.js";
 
 // ---------- easing + animation presets (pure functions of time) ----------
 
@@ -72,6 +78,10 @@ export function elementFor(seg, media) {
   if (media.kind === "image") {
     el = new Image();
     el.src = media.url;
+  } else if (media.kind === "audio") {
+    el = new Audio();
+    el.src = media.url;
+    el.preload = "auto";
   } else {
     el = document.createElement("video");
     el.src = media.url;
@@ -85,8 +95,11 @@ export function elementFor(seg, media) {
 }
 
 export function allVideoElements() {
-  return [...elements.values()].filter((e) => e instanceof HTMLVideoElement);
+  return [...elements.values()].filter((e) => e instanceof HTMLMediaElement);
 }
+
+/** The media element already created for an item, if any. */
+export const existingElement = (id) => elements.get(id);
 
 /** Which main segments are visible at t, and what source time each should show. */
 export function activeClips(project, t) {
@@ -118,23 +131,96 @@ export function activeClips(project, t) {
 // ---------- drawing ----------
 
 function drawClip(ctx, project, clip, W, H) {
-  const media = project.media[clip.seg.mediaId];
-  if (!media) return;
+  drawVisual(ctx, project, clip.seg, clip.local, W, H);
+}
+
+/** Canvas blend modes offered for clips and layers. */
+export const BLEND_MODES = {
+  normal: ["Normal", "source-over"], multiply: ["Multiply", "multiply"], screen: ["Screen", "screen"],
+  overlay: ["Overlay", "overlay"], darken: ["Darken", "darken"], lighten: ["Lighten", "lighten"],
+  add: ["Add", "lighter"], colorDodge: ["Colour dodge", "color-dodge"], colorBurn: ["Colour burn", "color-burn"],
+  hardLight: ["Hard light", "hard-light"], softLight: ["Soft light", "soft-light"], difference: ["Difference", "difference"],
+  exclusion: ["Exclusion", "exclusion"], hue: ["Hue", "hue"], saturation: ["Saturation", "saturation"],
+  color: ["Colour", "color"], luminosity: ["Luminosity", "luminosity"],
+};
+
+const NO_CROP = { l: 0, t: 0, r: 0, b: 0 };
+
+/** Position, scale, rotation and opacity of an item at local time `lt`, keyframes included. */
+export function transformAt(item, lt, isText = false) {
+  const b = isText ? { x: item.x, y: item.y, scale: item.scale || 1, rotation: item.rotation || 0 } : clipTransform(item);
+  return {
+    x: valueAt(item, "x", lt, b.x),
+    y: valueAt(item, "y", lt, b.y),
+    scale: valueAt(item, "scale", lt, b.scale),
+    rotation: valueAt(item, "rotation", lt, b.rotation),
+    opacity: valueAt(item, "opacity", lt, item.opacity ?? 1),
+  };
+}
+
+/** Effect settings of an item at local time (keyframed amounts resolved). Null when it has none. */
+export function fxSettingsAt(item, lt) {
+  if (!item.adjust && !item.filter?.type && !item.fx?.length && !item.chroma?.on) return null;
+  const adjust = {};
+  if (item.adjust || item.keyframes) for (const k of Object.keys(ADJUST)) adjust[k] = propAt(item, "adjust." + k, lt, 0);
+  const s = {
+    adjust,
+    filter: item.filter?.type ? { type: item.filter.type, amount: propAt(item, "filter.amount", lt, 1) } : null,
+    fx: (item.fx || []).map((f) => ({ type: f.type, amount: propAt(item, `fx.${f.id}.amount`, lt, 1) })),
+    chroma: item.chroma,
+  };
+  return hasFx(s) ? s : null;
+}
+
+/** Source frame size of a drawable. */
+const sizeOf = (el, media) => [el.displayWidth || el.videoWidth || el.naturalWidth || media.w, el.displayHeight || el.videoHeight || el.naturalHeight || media.h];
+
+/**
+ * Draws a main-track clip or an overlay layer at its local time `lt`: keyframed transform and opacity,
+ * crop, flips, cutout, colour/filters/effects and blend mode. Items without any of those take the
+ * original direct path, so older projects render exactly as before.
+ */
+function drawVisual(ctx, project, item, lt, W, H) {
+  const media = project.media[item.mediaId];
+  if (!media || media.kind === "audio") return;
   // During export a decoded VideoFrame may stand in for the <video> element.
-  const el = exportFrames.get(clip.seg.id) || elementFor(clip.seg, media);
-  const a = animState(clip.seg.anim, clip.local, clip.seg.dur);
-  const tr = clipTransform(clip.seg);
-  const sw = el.displayWidth || el.videoWidth || el.naturalWidth || media.w;
-  const sh = el.displayHeight || el.videoHeight || el.naturalHeight || media.h;
+  const el = exportFrames.get(item.id) || elementFor(item, media);
+  const [sw, sh] = sizeOf(el, media);
   if (!sw || !sh) return;
+  const a = animState(item.anim, lt, item.dur);
+  const tr = transformAt(item, lt);
+  const crop = item.crop || NO_CROP;
   const fit = Math.min(W / sw, H / sh);
-  ctx.save();
-  ctx.globalAlpha = a.alpha;
-  ctx.translate(tr.x * W + a.dx * W, tr.y * H + a.dy * H);
-  ctx.rotate((tr.rotation * Math.PI) / 180);
-  ctx.scale(a.scale * tr.scale, a.scale * tr.scale);
-  ctx.drawImage(el, (-sw * fit) / 2, (-sh * fit) / 2, sw * fit, sh * fit);
-  ctx.restore();
+  const fx = fxSettingsAt(item, lt);
+  const src = (item.cutout?.mode && cutoutFrame(item, el, sw, sh)) || el;
+  const target = fx ? layer(W, H) : ctx;
+  target.save();
+  if (!fx) {
+    target.globalAlpha = a.alpha * tr.opacity;
+    if (item.blend && item.blend !== "normal") target.globalCompositeOperation = BLEND_MODES[item.blend]?.[1] || "source-over";
+  }
+  target.translate(tr.x * W + a.dx * W, tr.y * H + a.dy * H);
+  target.rotate((tr.rotation * Math.PI) / 180);
+  target.scale(a.scale * tr.scale * (item.flipH ? -1 : 1), a.scale * tr.scale * (item.flipV ? -1 : 1));
+  const sx = crop.l * sw, sy = crop.t * sh;
+  const cw = sw * (1 - crop.l - crop.r), ch = sh * (1 - crop.t - crop.b);
+  if (cw > 0.5 && ch > 0.5) target.drawImage(src, sx, sy, cw, ch, (-sw * fit) / 2 + sx * fit, (-sh * fit) / 2 + sy * fit, cw * fit, ch * fit);
+  target.restore();
+  if (fx) {
+    const out = applyFx(target.canvas, fx, lt, W, H);
+    ctx.save();
+    ctx.globalAlpha = a.alpha * tr.opacity;
+    if (item.blend && item.blend !== "normal") ctx.globalCompositeOperation = BLEND_MODES[item.blend]?.[1] || "source-over";
+    ctx.drawImage(out, 0, 0, W, H);
+    ctx.restore();
+  }
+}
+
+/** A cleared, transparent full-frame canvas for drawing one layer before its effects. */
+function layer(W, H) {
+  const c = scratch(2, W, H);
+  c.clearRect(0, 0, W, H);
+  return c;
 }
 
 /** Playback speed of a main-track clip. Timeline duration = source span / speed. */
@@ -146,24 +232,32 @@ export const clipTransform = (seg) => seg.transform ?? { x: 0.5, y: 0.5, scale: 
  * On-screen bounds of a clip or text in canvas fractions: {cx, cy, w, h, rotation}.
  * w is a fraction of the canvas width, h of its height. Ignores in/out animation offsets.
  */
-export function itemBounds(project, kind, item, W, H) {
-  if (kind === "main") {
+export function itemBounds(project, kind, item, W, H, t) {
+  const lt = t == null ? 0 : t - (kind === "main" ? (layoutMain(project).find((s) => s.id === item.id)?.start ?? 0) : item.start);
+  if (kind === "main" || kind === "overlay") {
     const media = project.media[item.mediaId];
     if (!media?.w || !media?.h) return null;
-    const tr = clipTransform(item);
+    const tr = t == null ? { ...clipTransform(item) } : transformAt(item, lt);
     const fit = Math.min(W / media.w, H / media.h);
-    return { cx: tr.x, cy: tr.y, w: (media.w * fit * tr.scale) / W, h: (media.h * fit * tr.scale) / H, rotation: tr.rotation };
+    const c = item.crop || NO_CROP;
+    const fw = media.w * fit * tr.scale, fh = media.h * fit * tr.scale;
+    // The visible (cropped) rectangle's centre, offset from the transform origin, rotated with the item.
+    const ox = ((c.l - c.r) / 2) * fw * (item.flipH ? -1 : 1), oy = ((c.t - c.b) / 2) * fh * (item.flipV ? -1 : 1);
+    const r = (tr.rotation * Math.PI) / 180;
+    const dx = ox * Math.cos(r) - oy * Math.sin(r), dy = ox * Math.sin(r) + oy * Math.cos(r);
+    return { cx: tr.x + dx / W, cy: tr.y + dy / H, w: (fw * (1 - c.l - c.r)) / W, h: (fh * (1 - c.t - c.b)) / H, rotation: tr.rotation };
   }
   const st = item.style;
   const size = st.size * (W / 1920);
   const m = measureCtx();
-  m.font = `${st.weight} ${size}px ${st.font}`;
-  const lines = wrap(m, item.text, W * 0.85);
-  const pad = st.bg ? size * 0.6 : size * 0.2;
-  const tw = Math.max(...lines.map((l) => m.measureText(l).width)) + pad;
-  const th = lines.length * size * 1.2 + size * 0.2;
-  const s = item.scale || 1;
-  return { cx: item.x, cy: item.y, w: (tw * s) / W, h: (th * s) / H, rotation: item.rotation || 0 };
+  m.font = textFont(st, size);
+  const lines = wrap(m, applyCase(item.text, st), W * 0.85);
+  const pad = st.bg ? size * (st.bgPad ?? 0.6) : size * 0.2;
+  const spacing = (st.letterSpacing || 0) * size;
+  const tw = Math.max(...lines.map((l) => m.measureText(l).width + Math.max(0, l.length - 1) * spacing)) + pad;
+  const th = lines.length * size * (st.lineHeight || 1.2) + size * 0.2;
+  const tr = t == null ? { x: item.x, y: item.y, scale: item.scale || 1, rotation: item.rotation || 0 } : transformAt(item, lt, true);
+  return { cx: tr.x, cy: tr.y, w: (tw * tr.scale) / W, h: (th * tr.scale) / H, rotation: tr.rotation };
 }
 
 let _measure;
@@ -179,18 +273,24 @@ export function hitTest(b, px, py, W, H) {
   return Math.abs(lx) <= (b.w * W) / 2 && Math.abs(ly) <= (b.h * H) / 2;
 }
 
+/** CSS font shorthand for a text style at pixel size. */
+export const textFont = (st, size) => `${st.italic ? "italic " : ""}${st.weight} ${size}px ${st.font}`;
+const applyCase = (text, st) => (st.uppercase ? text.toUpperCase() : text);
+
 export function drawText(ctx, item, t, W, H) {
   const lt = t - item.start;
   if (lt < 0 || lt >= item.dur) return;
   const st = item.style;
   const a = animState(item.anim, lt, item.dur);
+  const tr = transformAt(item, lt, true);
+  if (tr.opacity <= 0) return;
   const size = st.size * (W / 1920);
   ctx.save();
-  ctx.globalAlpha = a.alpha;
-  ctx.translate(item.x * W + a.dx * W, item.y * H + a.dy * H);
-  ctx.rotate(((item.rotation || 0) * Math.PI) / 180);
-  ctx.scale(a.scale * (item.scale || 1), a.scale * (item.scale || 1));
-  ctx.font = `${st.weight} ${size}px ${st.font}`;
+  ctx.globalAlpha = a.alpha * tr.opacity;
+  ctx.translate(tr.x * W + a.dx * W, tr.y * H + a.dy * H);
+  ctx.rotate((tr.rotation * Math.PI) / 180);
+  ctx.scale(a.scale * tr.scale, a.scale * tr.scale);
+  ctx.font = textFont(st, size);
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.lineJoin = "round";
@@ -199,16 +299,20 @@ export function drawText(ctx, item, t, W, H) {
   const words = item.words?.length
     ? item.words
     : item.text.split(/(\s+)/).filter(Boolean).map((w) => ({ w }));
-  let full = words.map((w) => w.w).join("");
+  let full = applyCase(words.map((w) => w.w).join(""), st);
   if (a.reveal < 1) full = full.slice(0, Math.round(full.length * a.reveal));
   const lines = wrap(ctx, full, W * 0.85);
-  const lh = size * 1.2;
+  const lh = size * (st.lineHeight || 1.2);
   const y0 = -((lines.length - 1) * lh) / 2;
+  const spacing = (st.letterSpacing || 0) * size;
+  const lineW = (l) => ctx.measureText(l).width + Math.max(0, [...l].length - 1) * spacing;
+  const maxW = Math.max(...lines.map(lineW));
 
   if (st.bg) {
-    const bw = Math.max(...lines.map((l) => ctx.measureText(l).width)) + size * 0.6;
+    const pad = size * (st.bgPad ?? 0.6);
+    const bw = maxW + pad;
     ctx.fillStyle = st.bg;
-    roundRect(ctx, -bw / 2, y0 - lh / 2 - size * 0.15, bw, lines.length * lh + size * 0.3, size * 0.25);
+    roundRect(ctx, -bw / 2, y0 - lh / 2 - size * 0.15, bw, lines.length * lh + size * 0.3, size * (st.bgRadius ?? 0.25));
     ctx.fill();
   }
 
@@ -225,22 +329,34 @@ export function drawText(ctx, item, t, W, H) {
       })()
     : null;
 
+  const shadow = st.shadow;
+  const setShadow = (on) => {
+    if (!shadow) return;
+    ctx.shadowColor = on ? shadow.color || "#000000aa" : "transparent";
+    ctx.shadowBlur = on ? (shadow.blur ?? 8) * (W / 1920) : 0;
+    ctx.shadowOffsetX = on ? (shadow.x ?? 4) * (W / 1920) : 0;
+    ctx.shadowOffsetY = on ? (shadow.y ?? 4) * (W / 1920) : 0;
+  };
+
   lines.forEach((line, li) => {
     const y = y0 + li * lh;
-    const lw = ctx.measureText(line).width;
-    let x = -lw / 2;
+    const lw = lineW(line);
+    let x = st.align === "left" ? -maxW / 2 : st.align === "right" ? maxW / 2 - lw : -lw / 2;
     ctx.textAlign = "left";
     for (const ch of line) {
       const cw = ctx.measureText(ch).width;
       const hl = activeRange && charIndex >= activeRange[0] && charIndex < activeRange[1];
+      setShadow(true);
       if (st.strokeWidth > 0) {
         ctx.strokeStyle = st.stroke;
         ctx.lineWidth = st.strokeWidth * (W / 1920) * 2;
         ctx.strokeText(ch, x, y);
+        setShadow(false);
       }
       ctx.fillStyle = hl ? st.highlight : st.color;
       ctx.fillText(ch, x, y);
-      x += cw;
+      setShadow(false);
+      x += cw + spacing;
       charIndex++;
     }
     charIndex++; // the space consumed by wrapping
@@ -291,8 +407,33 @@ export function drawFrame(ctx, project, t) {
   } else if (clips[0]) {
     drawClip(ctx, project, clips[0], W, H);
   }
+  for (const o of activeOverlays(project, t)) drawVisual(ctx, project, o.item, o.local, W, H);
+  // Timeline effects apply to everything under them (not to the texts above).
+  for (const e of activeTimed(project.effects, t)) {
+    const fx = fxSettingsAt(e.item, e.local);
+    if (!fx) continue;
+    const out = applyFx(ctx.canvas, fx, e.local, W, H);
+    ctx.save();
+    ctx.globalAlpha = valueAt(e.item, "opacity", e.local, e.item.opacity ?? 1);
+    ctx.drawImage(out, 0, 0, W, H);
+    ctx.restore();
+  }
   for (const item of project.texts) drawText(ctx, item, t, W, H);
 }
+
+/** Items of a lane (overlays, audio, effects) visible at t, with local and source time. */
+export function activeTimed(list, t) {
+  const out = [];
+  for (const item of list || []) {
+    if (t < item.start || t >= item.start + item.dur) continue;
+    const local = t - item.start;
+    out.push({ item, local, sourceTime: (item.in || 0) + local * clipSpeed(item) });
+  }
+  return out;
+}
+
+/** Overlay layers at t, bottom track first. */
+export const activeOverlays = (project, t) => activeTimed(project.overlays, t).sort((a, b) => (a.item.track ?? 0) - (b.item.track ?? 0));
 
 const scratchCtx = [];
 function scratch(i, W, H) {
@@ -318,6 +459,18 @@ export const TRANSITIONS = {
   flash: "Flash",
   spin: "Spin",
   dissolve: "Dissolve",
+  wipeLeft: "Wipe left",
+  slideRight: "Slide right",
+  pushDown: "Push down",
+  zoomIn: "Zoom in",
+  zoomOut: "Zoom out",
+  blur: "Blur",
+  ripple: "Ripple",
+  swirl: "Swirl",
+  diagonal: "Diagonal wipe",
+  clock: "Clock wipe",
+  barnDoor: "Barn door",
+  heart: "Heart",
 };
 
 const FRAG = `#version 300 es
@@ -361,6 +514,28 @@ void main(){
     o = inside ? (p < 0.5 ? texture(A, g) : texture(B, g)) : vec4(0.0, 0.0, 0.0, 1.0);
   }
   else if (mode == 12) { float n = rnd(floor(f * vec2(aspect * 90.0, 90.0))); o = n < p ? texture(B,f) : texture(A,f); }
+  else if (mode == 13) { float e = smoothstep(p - 0.05, p + 0.05, 1.0 - f.x); o = mix(texture(B,f), texture(A,f), e); }
+  else if (mode == 14) { o = f.x > p ? texture(A, vec2(f.x - p, f.y)) : texture(B, vec2(f.x + (1.0 - p), f.y)); }
+  else if (mode == 15) { o = f.y > p ? texture(A, vec2(f.x, f.y - p)) : texture(B, vec2(f.x, f.y + (1.0 - p))); }
+  else if (mode == 16) { vec4 a = texture(A, (f - 0.5) / (1.0 + p * 1.5) + 0.5); o = mix(a, texture(B, f), smoothstep(0.3, 1.0, p)); }
+  else if (mode == 17) { vec4 b = texture(B, (f - 0.5) * (2.0 - p) + 0.5); o = mix(texture(A, f), b, smoothstep(0.0, 0.7, p)); }
+  else if (mode == 18) { float s = sin(p * 3.14159) * 0.02; vec4 a = vec4(0.0), b = vec4(0.0);
+    for (int i = 0; i < 12; i++) { float ang = float(i) * 0.5236; vec2 off = vec2(cos(ang), sin(ang) * aspect) * s;
+      a += texture(A, f + off); b += texture(B, f + off); }
+    o = mix(a / 12.0, b / 12.0, smoothstep(0.35, 0.65, p)); }
+  else if (mode == 19) { vec2 d = (f - 0.5) * vec2(aspect, 1.0); float r = length(d); float k = sin(p * 3.14159);
+    vec2 g = f + normalize(d + 1e-5) / vec2(aspect, 1.0) * sin(r * 50.0 - p * 30.0) * 0.02 * k;
+    o = mix(texture(A, g), texture(B, g), smoothstep(0.3, 0.7, p)); }
+  else if (mode == 20) { vec2 d = (f - 0.5) * vec2(aspect, 1.0); float k = sin(p * 3.14159) * 6.0 * smoothstep(0.7, 0.0, length(d));
+    d = mat2(cos(k), -sin(k), sin(k), cos(k)) * d; vec2 g = d / vec2(aspect, 1.0) + 0.5;
+    o = mix(texture(A, g), texture(B, g), smoothstep(0.4, 0.6, p)); }
+  else if (mode == 21) { float e = smoothstep(p * 2.2 - 0.1, p * 2.2 + 0.1, f.x + f.y); o = mix(texture(B,f), texture(A,f), e); }
+  else if (mode == 22) { vec2 d = f - 0.5; float ang = atan(d.x, -d.y) / 6.28318 + 0.5; float e = smoothstep(p - 0.01, p + 0.01, ang);
+    o = mix(texture(B,f), texture(A,f), e); }
+  else if (mode == 23) { float e = smoothstep(p - 0.03, p + 0.03, abs(f.x - 0.5) * 2.0); o = mix(texture(B,f), texture(A,f), e); }
+  else if (mode == 24) { vec2 q = (f - vec2(0.5, 0.45)) * vec2(aspect, 1.0) / max(p * 2.2, 1e-3) * 1.6;
+    q.y = -q.y + 0.25; float h = pow(q.x * q.x + q.y * q.y - 1.0, 3.0) - q.x * q.x * q.y * q.y * q.y;
+    o = (h < 0.0 || p > 0.98) ? texture(B, f) : texture(A, f); }
   else {
     float k = sin(p * 3.14159);
     float band = step(0.5, rnd(vec2(floor(f.y * 24.0), floor(p * 20.0))));
@@ -435,31 +610,69 @@ export function syncMedia(project, t, playing) {
   const { clips } = activeClips(project, t);
   const active = new Set(clips.map((c) => c.seg.id));
   const waits = [];
+  const position = (item, lt, el, sourceTime, frozen, muted) => {
+    el.muted = muted;
+    if (!muted) {
+      const vol = volumeAt(item, lt);
+      const media = project.media[item.mediaId];
+      const level = item.audio?.normalize ? levelFor(media) ?? 1 : 1;
+      if (needsLiveRoute(item, vol) || isRouted(el)) routeLive(el, item, vol, level);
+      else el.volume = Math.max(0, Math.min(1, vol));
+    }
+    if (playing && !frozen) {
+      const rate = clipSpeed(item);
+      if (el.playbackRate !== rate) el.playbackRate = rate;
+      if (Math.abs(el.currentTime - sourceTime) > 0.3 * Math.max(1, rate)) el.currentTime = sourceTime;
+      if (el.paused) el.play().catch(() => {});
+    } else {
+      if (!el.paused) el.pause();
+      if (Math.abs(el.currentTime - sourceTime) > 1 / 120 || el.readyState < 2) {
+        waits.push(seekTo(el, sourceTime));
+      }
+    }
+  };
   for (const c of clips) {
     const el = elementFor(c.seg, project.media[c.seg.mediaId]);
-    if (!(el instanceof HTMLVideoElement)) {
+    if (!(el instanceof HTMLMediaElement)) {
       if (!el.complete) waits.push(new Promise((r) => (el.onload = r)));
       continue;
     }
     // Inside a transition one side is "frozen" on its first/last frame.
     const frozen = t < c.seg.start || t >= c.seg.start + c.seg.dur;
-    el.muted = !playing || frozen || clips.length > 1 && c !== clips[0];
-    if (playing && !frozen) {
-      const rate = clipSpeed(c.seg);
-      if (el.playbackRate !== rate) el.playbackRate = rate;
-      if (Math.abs(el.currentTime - c.sourceTime) > 0.3 * Math.max(1, rate)) el.currentTime = c.sourceTime;
-      if (el.paused) el.play().catch(() => {});
-    } else {
-      if (!el.paused) el.pause();
-      if (Math.abs(el.currentTime - c.sourceTime) > 1 / 120 || el.readyState < 2) {
-        waits.push(seekTo(el, c.sourceTime));
+    const muted = !playing || frozen || clips.length > 1 && c !== clips[0] || !!c.seg.mute;
+    position(c.seg, c.local, el, c.sourceTime, frozen, muted);
+  }
+  for (const list of [project.overlays, project.audio]) {
+    for (const o of activeTimed(list, t)) {
+      const media = project.media[o.item.mediaId];
+      if (!media) continue;
+      active.add(o.item.id);
+      const el = elementFor(o.item, media);
+      if (!(el instanceof HTMLMediaElement)) {
+        if (!el.complete) waits.push(new Promise((r) => (el.onload = r)));
+        continue;
       }
+      position(o.item, o.local, el, o.sourceTime, false, !playing || !!o.item.mute);
     }
   }
   for (const [id, el] of elements) {
-    if (!active.has(id) && el instanceof HTMLVideoElement && !el.paused) el.pause();
+    if (!active.has(id) && el instanceof HTMLMediaElement && !el.paused) el.pause();
   }
   return Promise.all(waits);
+}
+
+/** Live preview volume (0..1) from the volume setting, its keyframes and fades. Louder than 100% plays through audiofx. */
+export function liveVolume(item, lt) {
+  return Math.max(0, Math.min(1, volumeAt(item, lt)));
+}
+
+/** Volume multiplier at local time: base volume (keyframable) x fade in/out. */
+export function volumeAt(item, lt) {
+  const au = item.audio || {};
+  let v = valueAt(item, "volume", lt, au.volume ?? 1);
+  if (au.fadeIn > 0 && lt < au.fadeIn) v *= Math.max(0, lt / au.fadeIn);
+  if (au.fadeOut > 0 && lt > item.dur - au.fadeOut) v *= Math.max(0, (item.dur - lt) / au.fadeOut);
+  return v;
 }
 
 // One in-flight seek per element: re-issuing the same seek every frame would restart it forever.
