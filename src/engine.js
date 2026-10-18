@@ -665,7 +665,48 @@ export function syncMedia(project, t, playing) {
   for (const [id, el] of elements) {
     if (!active.has(id) && el instanceof HTMLMediaElement && !el.paused) el.pause();
   }
+  if (playing) prerollUpcoming(project, t, active);
   return Promise.all(waits);
+}
+
+/**
+ * While playing, parks the player of every clip that starts within the next 1.5 s on its first frame, so
+ * at the cut it can start straight away instead of briefly showing wherever it was left (e.g. the other
+ * half of a split clip).
+ */
+function prerollUpcoming(project, t, active) {
+  const soon = [];
+  for (const s of layoutMain(project)) if (s.start > t && s.start - t < 1.5) soon.push(s);
+  for (const list of [project.overlays, project.audio]) for (const x of list || []) if (x.start > t && x.start - t < 1.5) soon.push(x);
+  for (const item of soon) {
+    if (active.has(item.id)) continue;
+    const media = project.media[item.mediaId];
+    if (!media || media.kind === "image") continue;
+    const el = elementFor(item, media);
+    if (!(el instanceof HTMLMediaElement) || !el.paused || el.seeking) continue;
+    const start = sourceAt(item, 0);
+    if (Math.abs(el.currentTime - start) > 0.03) seekTo(el, start);
+  }
+}
+
+/**
+ * True when every visible video is showing (about) the right moment. During playback the render loop
+ * holds the previous frame while a player is still seeking, instead of flashing the wrong frame.
+ */
+export function framesReady(project, t) {
+  const check = (item, lt, sourceTime) => {
+    const el = elements.get(item.id);
+    if (!(el instanceof HTMLVideoElement)) return true;
+    if (el.readyState < 2 || el.seeking) return false;
+    return Math.abs(el.currentTime - sourceTime) <= 0.25 * Math.max(1, rateAt(item, lt));
+  };
+  const { clips } = activeClips(project, t);
+  for (const c of clips) {
+    if (t < c.seg.start || t >= c.seg.start + c.seg.dur) continue; // frozen side of a transition
+    if (!check(c.seg, c.local, c.sourceTime)) return false;
+  }
+  for (const o of activeTimed(project.overlays, t)) if (!check(o.item, o.local, o.sourceTime)) return false;
+  return true;
 }
 
 /** Live preview volume (0..1) from the volume setting, its keyframes and fades. Louder than 100% plays through audiofx. */

@@ -4,7 +4,7 @@ import {
   useStore, getState, setState, edit, editLive, undo, redo, projectDuration, isSelected, select, findItem,
 } from "./store.js";
 import {
-  drawFrame, syncMedia, renderLock, activeClips, activeOverlays, itemBounds, hitTest, transformAt, TRANSITIONS,
+  drawFrame, syncMedia, framesReady, renderLock, activeClips, activeOverlays, itemBounds, hitTest, transformAt, TRANSITIONS,
 } from "./engine.js";
 import {
   clock, play, pause, togglePlay, seek, toast, importFiles, addMediaToTimeline, splitAtPlayhead, deleteSelection,
@@ -32,7 +32,7 @@ setState({ snap: true, timelineH: Math.max(260, Math.min(460, Math.round(window.
 
 function startRenderLoop(canvas) {
   const ctx = canvas.getContext("2d");
-  let raf;
+  let raf, held = 0;
   const tick = () => {
     raf = requestAnimationFrame(tick);
     if (renderLock.exporting) return;
@@ -45,6 +45,13 @@ function startRenderLoop(canvas) {
       setState({ time: t });
     }
     syncMedia(s.project, t, s.playing);
+    // At a cut the next clip's player may still be seeking: keep the last frame on screen for a moment
+    // (never more than ~0.4 s) rather than flash a wrong frame.
+    if (s.playing && !framesReady(s.project, t)) {
+      held ||= performance.now();
+      if (performance.now() - held < 400) return;
+    }
+    held = 0;
     drawFrame(ctx, s.project, t);
   };
   raf = requestAnimationFrame(tick);

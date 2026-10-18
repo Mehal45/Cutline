@@ -1,7 +1,7 @@
 // Multi-track timeline: timeline effects, text, picture-in-picture layers, the main video track and audio tracks.
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
-  useStore, getState, setState, edit, editLive, checkpoint, undo, redo, layoutMain, projectDuration, isSelected, select,
+  useStore, getState, setState, edit, editLive, checkpoint, undo, redo, layoutMain, projectDuration, isSelected, select, findItem,
   compactTracks, trackFlags, toggleTrackFlag,
 } from "../store.js";
 import { clipSpeed, TRANSITIONS } from "../engine.js";
@@ -25,13 +25,16 @@ const LANE_KEY = { effect: "effects", overlay: "overlays", audio: "audio" };
  * With `scroll` (the timeline's scroll box), holding the pointer near or past an edge keeps scrolling that
  * way, and dx/dy include the distance scrolled, so whatever is being dragged stays under the pointer.
  */
-export function dragGesture(e, onMove, { onClick, undoable = true, onEnd, scroll } = {}) {
+export function dragGesture(e, onMove, { onClick, undoable = true, onEnd, scroll, tip } = {}) {
   e.stopPropagation();
   e.preventDefault();
   const x0 = e.clientX, y0 = e.clientY;
   const sl0 = scroll?.scrollLeft ?? 0, st0 = scroll?.scrollTop ?? 0;
   let started = false, last = null, timer = null;
-  const fire = () => onMove(last, last.clientX - x0 + ((scroll?.scrollLeft ?? 0) - sl0), last.clientY - y0 + ((scroll?.scrollTop ?? 0) - st0));
+  const fire = () => {
+    onMove(last, last.clientX - x0 + ((scroll?.scrollLeft ?? 0) - sl0), last.clientY - y0 + ((scroll?.scrollTop ?? 0) - st0));
+    if (tip) setState({ trimTip: { x: last.clientX, y: last.clientY, text: tip() } });
+  };
   const autoScroll = () => {
     if (!last) return;
     const r = scroll.getBoundingClientRect();
@@ -64,7 +67,7 @@ export function dragGesture(e, onMove, { onClick, undoable = true, onEnd, scroll
     window.removeEventListener("pointerup", up);
     if (!started) onClick?.(ev);
     else onEnd?.(ev);
-    setState({ guides: null, snapAt: null });
+    setState({ guides: null, snapAt: null, trimTip: null });
   };
   window.addEventListener("pointermove", move);
   window.addEventListener("pointerup", up);
@@ -206,6 +209,12 @@ function Wave({ media, item, width, height }) {
     }
   }, [peaks, width, height, item.in, item.dur, item.speed, item.speedCurve]);
   return html`<canvas ref=${ref} class="wave" />`;
+}
+
+/** "Length 00:02.40 · from 00:01.10" for the trim tooltip. */
+function trimText(kind, id) {
+  const it = findItem(getState().project, kind, id);
+  return it ? `Length ${fmt(it.dur)}${"in" in it || kind === "main" ? ` · from ${fmt(it.in || 0)}` : ""}` : "";
 }
 
 // ---------------- track headers ----------------
@@ -466,7 +475,7 @@ export function Timeline() {
         if ("in" in orig) x.in = (orig.in || 0) + cut * sp;
         x.keyframes = orig.keyframes && structuredClone(orig.keyframes);
         if (x.keyframes) shiftKeyframes(x, -cut, x.dur);
-      }), { scroll: scroller.current });
+      }), { scroll: scroller.current, tip: () => trimText(kind, item.id) });
     };
     const trimRight = (e) => {
       const orig = structuredClone(item);
@@ -478,18 +487,18 @@ export function Timeline() {
         if (s.at != null && s.t > orig.start + 0.2) end = s.t;
         setState({ snapAt: s.at });
         x.dur = Math.min((maxSrc - (orig.in || 0)) / sp, end - orig.start);
-      }), { scroll: scroller.current });
+      }), { scroll: scroller.current, tip: () => trimText(kind, item.id) });
     };
     return html`<div key=${item.id} data-kind=${kind} data-id=${item.id}
         class=${`seg ${cls}` + (isSelected(kind, item.id) ? " selected" : "") + (item.mute ? " muted" : "")}
         style=${{ left: LABEL + item.start * zoom, width: Math.max(4, item.dur * zoom) }}
         onPointerDown=${onBody}>
       ${extra}
-      <div class="handle l" onPointerDown=${trimLeft} />
+      <div class="handle l" title="Drag to trim or extend the start" onPointerDown=${trimLeft} />
       <span class=${kind === "overlay" ? "label" : ""}>${label}</span>
       ${hasCurve(item) ? html`<b class="speed-badge" title="Speed curve">〰 curve</b>` : sp !== 1 && html`<b class="speed-badge">${+sp.toFixed(2)}×</b>`}
       ${keyMarks(item)}
-      <div class="handle r" onPointerDown=${trimRight} />
+      <div class="handle r" title="Drag to trim or extend the end" onPointerDown=${trimRight} />
     </div>`;
   };
 
@@ -674,14 +683,15 @@ export function Timeline() {
                     x.in = s.in + cut * sp; x.dur = s.dur - cut;
                     x.keyframes = orig.keyframes && structuredClone(orig.keyframes);
                     if (x.keyframes) shiftKeyframes(x, -cut, x.dur);
-                  }), { scroll: scroller.current });
-                }} />
+                  }), { scroll: scroller.current, tip: () => trimText("main", s.id) });
+                }} title="Drag to trim or extend the start" />
                 <span class="label">${media?.name}</span>
                 ${hasCurve(s) ? html`<b class="speed-badge" title="Speed curve">〰 curve</b>` : sp !== 1 && html`<b class="speed-badge">${+sp.toFixed(2)}×</b>`}
                 ${fxBadges(s)}
                 ${keyMarks(s)}
                 <div class="handle r" onPointerDown=${(e) => dragGesture(e, (ev, dx) => editLive((p) => {
-                  p.main.find((y) => y.id === s.id).dur = Math.max(0.2, Math.min((maxSrc - s.in) / sp, s.dur + dx / zoom)); }), { scroll: scroller.current })} />
+                  p.main.find((y) => y.id === s.id).dur = Math.max(0.2, Math.min((maxSrc - s.in) / sp, s.dur + dx / zoom)); }), { scroll: scroller.current, tip: () => trimText("main", s.id) })}
+                  title="Drag to trim or extend the end" />
               </div>
               ${i < segs.length - 1 && html`<div data-kind=${s.transition ? "transition" : undefined} data-id=${s.id}
                   class=${"diamond" + (s.transition ? " has" : "") + (isSelected("transition", s.id) ? " selected" : "")}
@@ -709,10 +719,17 @@ export function Timeline() {
         ${ghost?.line != null && html`<div class="insert-line" style=${{ left: ghost.line }} />`}
         ${ghost?.width != null && html`<div class=${"drag-ghost " + ghost.lane} style=${{ left: ghost.left, top: ghost.top, width: ghost.width, height: ghost.height }}>${ghost.label}</div>`}
         ${snapAt != null && html`<div class="snapline" style=${{ left: LABEL + snapAt * zoom }} />`}
+        <${TrimTip} />
         <div class="playhead" style=${{ left: LABEL + time * zoom }} />
       </div>
     </div>
   </section>`;
+}
+
+/** Floating readout while trimming a clip. */
+function TrimTip() {
+  const tip = useStore((s) => s.trimTip);
+  return tip ? html`<div class="trimtip" style=${{ left: tip.x + 14, top: tip.y - 30 }}>${tip.text}</div>` : null;
 }
 
 /** Drag the top edge of the timeline to make it taller or shorter. */

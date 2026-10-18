@@ -419,6 +419,16 @@
     .seg.clip { background: var(--clip); }
     .ruler { background: var(--panel); }
     .empty { left: 170px; }
+    /* trim handles: wide grab zones with a bracket, like most editors */
+    .seg .handle { width: 12px; cursor: ew-resize; background: transparent; z-index: 3; }
+    .seg .handle::after { content: ""; position: absolute; top: 3px; bottom: 3px; width: 4px; border-radius: 2px; background: #fff; opacity: 0; transition: opacity .12s; }
+    .seg .handle.l::after { left: 2px; } .seg .handle.r::after { right: 2px; }
+    .seg:hover .handle::after { opacity: .55; }
+    .seg.selected .handle::after, .seg .handle:hover::after { opacity: 1; }
+    .seg .handle:hover { background: rgba(255,255,255,.12); }
+    .main-track .diamond { top: 2px; width: 18px; height: 18px; font-size: 9px; z-index: 4; }
+    .trimtip { position: fixed; z-index: 50; pointer-events: none; background: #000d; color: #fff; border: 1px solid var(--accent);
+      border-radius: 5px; padding: 3px 8px; font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
   </style>
 </head>
 <body>
