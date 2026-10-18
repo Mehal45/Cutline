@@ -246,7 +246,8 @@ function splitTimed(p, lane, ids, time) {
     a.dur = local;
     if (a.words) { a.words = a.words.filter((w) => w.t0 < time); b.words = b.words.filter((w) => w.t0 >= time); }
     if (a.keyframes) [a.keyframes, b.keyframes] = splitKeyframes(a, local);
-    if (a.anim) { b.anim = { in: { ...a.anim.in, type: "none" }, out: a.anim.out }; a.anim.out = { ...a.anim.out, type: "none" }; }
+    // Text pieces each keep the original in and out animation; clips/layers only animate at the outer ends.
+    if (a.anim && lane !== "texts") { b.anim = { in: { ...a.anim.in, type: "none" }, out: a.anim.out }; a.anim.out = { ...a.anim.out, type: "none" }; }
     if (a.audio?.fadeOut) a.audio.fadeOut = 0;
     if (b.audio?.fadeIn) b.audio.fadeIn = 0;
     p[lane].splice(i + 1, 0, b);

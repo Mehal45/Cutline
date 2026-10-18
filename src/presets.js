@@ -1,7 +1,10 @@
-// "My presets" for text: a saved look (style, position, size, rotation, opacity, animation, keyframes and
+// "My presets". Kinds: text (look of a text layer), adjust (an adjustment layer / timeline effect) and audio
+// (volume, fades, cleanup and voice effect for clips and audio layers).
+//
+// Text presets: a saved look (style, position, size, rotation, opacity, animation, keyframes and
 // length) that adds a ready-styled text layer in one click. Stored on this computer: in the desktop app in
 // a file next to its settings (survives updates), in a browser in local storage.
-import { getState, setState, edit, uid } from "./store.js";
+import { getState, setState, edit, uid, freeTrack, findItem } from "./store.js";
 import { toast, addText } from "./actions.js";
 
 const KEY = "cutline.textPresets";
@@ -30,31 +33,74 @@ export async function loadTextPresets() {
   setState({ textPresets: await read() });
 }
 
-export const textPresets = () => getState().textPresets || [];
+const kindOf = (p) => p.kind || "text";
+export const allPresets = () => getState().textPresets || [];
+export const textPresets = () => allPresets().filter((p) => kindOf(p) === "text");
+export const presetsOf = (kind) => allPresets().filter((p) => kindOf(p) === kind);
 export const defaultPreset = () => textPresets().find((p) => p.isDefault) || null;
 
 /** Saves a text item's look as a new preset (or overwrites one with the same name). */
 export async function saveTextPreset(item, name) {
+  await savePreset("text", item, name, LOOK, { sample: item.text.slice(0, 40) });
+}
+
+const ADJUST_LOOK = ["dur", "fx", "filter", "adjust", "opacity", "keyframes", "name"];
+const AUDIO_KEYS = ["volume", "fadeIn", "fadeOut", "denoise", "enhance", "normalize", "voice"];
+
+/** Saves (or overwrites, by name within its kind) a preset of `kind` from an item. */
+async function savePreset(kind, item, name, keys, extra = {}) {
   name = (name || "").trim() || "My preset";
-  const look = Object.fromEntries(LOOK.filter((k) => item[k] !== undefined).map((k) => [k, structuredClone(item[k])]));
-  const list = textPresets().filter((p) => p.name !== name);
-  const old = textPresets().find((p) => p.name === name);
-  list.push({ id: old?.id || uid(), name, sample: item.text.slice(0, 40), isDefault: old?.isDefault || false, look });
+  const look = Object.fromEntries(keys.filter((k) => item[k] !== undefined).map((k) => [k, structuredClone(item[k])]));
+  const old = allPresets().find((p) => kindOf(p) === kind && p.name === name);
+  const list = allPresets().filter((p) => p !== old);
+  list.push({ id: old?.id || uid(), kind, name, isDefault: old?.isDefault || false, ...extra, look });
   await write(list);
-  toast(`Saved text preset “${name}”`);
+  toast(`Saved ${kind === "adjust" ? "adjustment" : kind} preset “${name}”`);
+}
+
+/** Adjustment layer: its effects, filter, colour adjustments, mix and length. */
+export const saveAdjustPreset = (item, name) => savePreset("adjust", item, name, ADJUST_LOOK);
+
+/** Audio settings of a clip, layer or audio item (not its timing). */
+export async function saveAudioPreset(item, name) {
+  const audio = Object.fromEntries(AUDIO_KEYS.filter((k) => item.audio?.[k] !== undefined).map((k) => [k, item.audio[k]]));
+  await savePreset("audio", { audio }, name, ["audio"]);
+}
+
+/** Adds an adjustment layer at the playhead with a preset's settings. */
+export function addAdjustFromPreset(preset) {
+  const { time } = getState();
+  const id = uid();
+  const look = structuredClone(preset.look);
+  const dur = look.dur || 3;
+  edit((p) => p.effects.push({ id, track: freeTrack(p.effects, time, dur), start: time, dur, fx: [], ...look, name: preset.name }));
+  setState({ selection: [{ kind: "effect", id }] });
+}
+
+/** Applies an audio preset to the selected clips, layers and audio items. */
+export function applyAudioPreset(preset) {
+  const targets = getState().selection.filter((s) => ["main", "overlay", "audio"].includes(s.kind));
+  if (!targets.length) return toast("Select a clip or audio layer first");
+  edit((p) => targets.forEach((t) => {
+    const it = findItem(p, t.kind, t.id);
+    if (!it) return;
+    it.audio = { ...structuredClone(preset.look.audio || {}) };
+    if (it.keyframes?.volume) delete it.keyframes.volume; // the preset's volume replaces any volume animation
+  }));
+  toast(`Applied “${preset.name}” to ${targets.length} item${targets.length > 1 ? "s" : ""}`);
 }
 
 export async function deleteTextPreset(id) {
-  await write(textPresets().filter((p) => p.id !== id));
+  await write(allPresets().filter((p) => p.id !== id));
 }
 
 export async function renameTextPreset(id, name) {
-  await write(textPresets().map((p) => (p.id === id ? { ...p, name: name.trim() || p.name } : p)));
+  await write(allPresets().map((p) => (p.id === id ? { ...p, name: name.trim() || p.name } : p)));
 }
 
-/** Marks one preset as the one "Add text" (and the T key) uses; click again to unmark. */
+/** Marks one text preset as the one "Add text" (and the T key) uses; click again to unmark. */
 export async function toggleDefaultPreset(id) {
-  await write(textPresets().map((p) => ({ ...p, isDefault: p.id === id ? !p.isDefault : false })));
+  await write(allPresets().map((p) => (kindOf(p) !== "text" ? p : { ...p, isDefault: p.id === id ? !p.isDefault : false })));
 }
 
 /** Adds a text layer at the playhead with a preset's look, selected and ready to type. */

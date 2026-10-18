@@ -6,7 +6,11 @@ import { applyEffect, applyFilter, addAdjustmentLayer, importFiles, addText, toa
 import { html, Field } from "./kit.js";
 import { loadFont } from "./fonts.js";
 import { TTS_VOICES, speak, ttsStatus } from "../tts.js";
-import { addTextFromPreset, addDefaultText, deleteTextPreset, renameTextPreset, toggleDefaultPreset, applyPresetToSelection } from "../presets.js";
+import {
+  addTextFromPreset, addDefaultText, deleteTextPreset, renameTextPreset, toggleDefaultPreset, applyPresetToSelection,
+  addAdjustFromPreset, applyAudioPreset,
+} from "../presets.js";
+import { VOICE_EFFECTS } from "../audiofx.js";
 
 // ---------------- previews ----------------
 
@@ -78,7 +82,48 @@ export function AdjustmentTab() {
     <b class="lib-title">Adjustment layer</b>
     <p class="muted">An adjustment layer colours, filters and adds effects to everything under it on the timeline, for as long as it lasts.</p>
     <button class="card-big" onClick=${addAdjustmentLayer}><i class="ico icon-sliders-horizontal" /> Add adjustment layer</button>
+    <${KindPresets} kind="adjust" title="My adjustment presets"
+      empty="Select an adjustment layer on the timeline and press “Save as preset” to keep its effects, filter and colour settings here."
+      describe=${(p) => [p.look.filter?.type && "filter", (p.look.fx || []).length && `${p.look.fx.length} effect${p.look.fx.length > 1 ? "s" : ""}`,
+        p.look.adjust && Object.values(p.look.adjust).some((v) => v) && "colour"].filter(Boolean).join(" · ") || "adjustment"}
+      onUse=${addAdjustFromPreset} useTitle="Add at the playhead" />
   </div>`;
+}
+
+/** A list of saved presets of one kind (adjustment layers, audio settings) with use / rename / delete. */
+function KindPresets({ kind, title, empty, describe, onUse, useTitle }) {
+  const presets = (useStore((s) => s.textPresets) || []).filter((p) => p.kind === kind);
+  const [renaming, setRenaming] = useState(null);
+  return html`<div class="kpresets">
+    <b class="lib-title">${title}</b>
+    ${!presets.length && html`<p class="muted">${empty}</p>`}
+    ${presets.map((p) => html`<div key=${p.id} class="kpreset">
+      <button class="kpreset-main" onClick=${() => onUse(p)} title=${useTitle}>
+        ${renaming === p.id
+          ? html`<input autoFocus defaultValue=${p.name} onClick=${(e) => e.stopPropagation()}
+              onBlur=${(e) => { renameTextPreset(p.id, e.target.value); setRenaming(null); }}
+              onKeyDown=${(e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") setRenaming(null); }} />`
+          : html`<b>${p.name}</b>`}
+        <small>${describe(p)}</small>
+      </button>
+      <span class="ptile-btns">
+        <button title="Rename" onClick=${() => setRenaming(p.id)}><i class="ico icon-pencil" /></button>
+        <button title="Delete preset" onClick=${() => { if (confirm(`Delete the preset “${p.name}”?`)) deleteTextPreset(p.id); }}><i class="ico icon-trash-2" /></button>
+      </span>
+    </div>`)}
+  </div>`;
+}
+
+const audioSummary = (p) => {
+  const a = p.look.audio || {};
+  return [`${Math.round((a.volume ?? 1) * 100)}%`, a.fadeIn && `fade in ${a.fadeIn}s`, a.fadeOut && `fade out ${a.fadeOut}s`,
+    a.denoise && "noise reduced", a.enhance && "voice enhanced", a.normalize && "levelled", a.voice && VOICE_EFFECTS[a.voice]].filter(Boolean).join(" · ");
+};
+
+export function AudioPresetsTab() {
+  return html`<${KindPresets} kind="audio" title="My audio presets"
+    empty="Select a video clip or audio layer, set its volume, fades and cleanup in the Audio tab on the right, then press “Save audio preset”."
+    describe=${audioSummary} onUse=${applyAudioPreset} useTitle="Apply to the selected clips and audio layers" />`;
 }
 
 export function FiltersTab() {
@@ -169,7 +214,7 @@ export const TEXT_PRESETS = [
 
 /** Saved text presets: click to add a ready-styled text at the playhead. */
 function MyPresets() {
-  const presets = useStore((s) => s.textPresets) || [];
+  const presets = (useStore((s) => s.textPresets) || []).filter((p) => (p.kind || "text") === "text");
   const textSelected = useStore((s) => s.selection.some((x) => x.kind === "text"));
   const [renaming, setRenaming] = useState(null);
   useEffect(() => { presets.forEach((p) => p.look.style?.font && loadFont(p.look.style.font, p.look.style.weight, p.look.style.italic)); }, [presets.length]);

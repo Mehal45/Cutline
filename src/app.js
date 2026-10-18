@@ -18,7 +18,7 @@ import { transcribe, wordsToCaptions, CAPTION_MODELS } from "./captions.js";
 import { html, fmt, Field, Icon } from "./ui/kit.js";
 import { Inspector } from "./ui/inspector.js";
 import { Timeline, dragGesture } from "./ui/timeline.js";
-import { EffectsTab, FiltersTab, AudioTab, TextTab, AdjustmentTab } from "./ui/library.js";
+import { EffectsTab, FiltersTab, AudioTab, TextTab, AdjustmentTab, AudioPresetsTab } from "./ui/library.js";
 import { EFFECT_CATEGORIES } from "./fx.js";
 import { linkWebFonts, loadProjectFonts, loadSystemFonts, loadRecentFonts } from "./ui/fonts.js";
 import { loadTextPresets, addDefaultText } from "./presets.js";
@@ -147,7 +147,7 @@ const LIB_TABS = [
 
 const SUB_NAV = {
   media: [["library", "Library"]],
-  audio: [["music", "Music & sounds"], ["tts", "Text to speech"]],
+  audio: [["music", "Music & sounds"], ["tts", "Text to speech"], ["mine", "My presets"]],
   text: [["mine", "My presets"], ["add", "Add text"], ["presets", "Text presets"], ["captions", "Auto captions"]],
   effects: EFFECT_CATEGORIES.map((c, i) => [String(i), c]),
   transitions: [["all", "Transitions"]],
@@ -174,7 +174,7 @@ function LeftPanel() {
       </div>
       <div class="libcontent">
         ${tab === "media" && html`<${MediaTab} />`}
-        ${tab === "audio" && html`<${AudioTab} part=${sub} />`}
+        ${tab === "audio" && (sub === "mine" ? html`<${AudioPresetsTab} />` : html`<${AudioTab} part=${sub} />`)}
         ${tab === "text" && (sub === "captions" ? html`<${CaptionsForm} />` : html`<${TextTab} part=${sub} />`)}
         ${tab === "effects" && html`<${EffectsTab} cat=${+sub} />`}
         ${tab === "transitions" && html`<${TransitionsTab} />`}

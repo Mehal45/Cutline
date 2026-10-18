@@ -15,18 +15,18 @@ import { FONTS, loadFont, familyCss, canListSystemFonts, loadSystemFonts, rememb
 import { SpeedCurveEditor } from "./speedcurve.js";
 import { hasCurve } from "../speed.js";
 import { setDefaultEase, defaultEase, propAt, hasKeys, keyAt } from "../keyframes.js";
-import { saveTextPreset } from "../presets.js";
+import { saveTextPreset, saveAdjustPreset, saveAudioPreset, presetsOf, applyAudioPreset } from "../presets.js";
 
 /** "Save as preset": keeps this text's whole look for one-click reuse (Text tab › My presets). */
-function SavePreset({ t }) {
+function SavePreset({ t, save: saveFn, label = "Save as preset", hint = "Save font, size, colour, shadow, position, animation and length" }) {
   const [naming, setNaming] = useState(false);
   const nameRef = useRef();
   const presets = useStore((s) => s.textPresets) || [];
-  if (!naming) return html`<button class="wide save-preset" onClick=${() => setNaming(true)} title="Save font, size, colour, shadow, position, animation and length">
-    <i class="ico icon-bookmark-plus" /> Save as preset</button>`;
-  const save = (name) => { saveTextPreset(getState().project.texts.find((x) => x.id === t.id) || t, name); setNaming(false); };
+  if (!naming) return html`<button class="wide save-preset" onClick=${() => setNaming(true)} title=${hint}>
+    <i class="ico icon-bookmark-plus" /> ${label}</button>`;
+  const save = (name) => { (saveFn ? saveFn(name) : saveTextPreset(getState().project.texts.find((x) => x.id === t.id) || t, name)); setNaming(false); };
   return html`<div class="preset-name">
-    <input ref=${nameRef} autoFocus placeholder="Preset name, e.g. Minecraft action" list="preset-names"
+    <input ref=${nameRef} autoFocus placeholder="Preset name" list="preset-names"
       onKeyDown=${(e) => { if (e.key === "Enter") save(e.target.value); if (e.key === "Escape") setNaming(false); }} />
     <datalist id="preset-names">${presets.map((p) => html`<option value=${p.name} />`)}</datalist>
     <button class="primary" onClick=${() => save(nameRef.current.value)}>Save</button>
@@ -339,7 +339,21 @@ export function AudioSection({ kind, item, media }) {
       </div>
     <//>
     ${kind !== "audio" && media?.kind === "video" && !item.mute && html`<button class="wide" onClick=${detachAudio}>Detach audio to its own track</button>`}
+    <${Section} title="Audio presets">
+      <${AudioPresetPicker} />
+      <${SavePreset} label="Save audio preset" hint="Save volume, fades, cleanup and voice effect"
+        save=${(name) => saveAudioPreset(findItem(getState().project, kind, item.id), name)} />
+    <//>
   </div>`;
+}
+
+function AudioPresetPicker() {
+  const list = (useStore((s) => s.textPresets) || []).filter((p) => p.kind === "audio");
+  if (!list.length) return null;
+  return html`<select class="wide-select" value="" onChange=${(e) => { const p = list.find((x) => x.id === e.target.value); if (p) applyAudioPreset(p); }}>
+    <option value="">Apply a saved audio preset…</option>
+    ${list.map((p) => html`<option value=${p.id}>${p.name}</option>`)}
+  </select>`;
 }
 
 /** One-click smoothing: every keyframe eases in and out, and new keyframes do so by default. */
@@ -592,6 +606,8 @@ function EffectInspector({ item }) {
     <${Field} label="Name"><input value=${item.name || ""} onChange=${(e) => set((x) => (x.name = e.target.value))} /><//>
     <p class="muted">Applies to every clip and layer under it, for as long as it lasts on the timeline.</p>
     <${KSlider} kind="effect" id=${item.id} path="opacity" label="Mix" min=${0} max=${1} fallback=${1} format=${pct} />
+    <${SavePreset} label="Save as preset" hint="Save this layer's effects, filter, colour, mix and length (Adjustment tab › My adjustment presets)"
+      save=${(name) => saveAdjustPreset(findItem(getState().project, "effect", item.id), name)} />
     ${tab === "effects" && html`<${EffectsSection} kind="effect" item=${item} />`}
     ${tab === "color" && html`<${FilterSection} kind="effect" item=${item} /><${AdjustSection} kind="effect" item=${item} />`}
     ${tab === "animate" && html`<${CurveEditor} kind="effect" id=${item.id} />`}
