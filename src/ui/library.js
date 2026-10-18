@@ -8,7 +8,7 @@ import { loadFont } from "./fonts.js";
 import { TTS_VOICES, speak, ttsStatus } from "../tts.js";
 import {
   addTextFromPreset, addDefaultText, deleteTextPreset, renameTextPreset, toggleDefaultPreset, applyPresetToSelection,
-  addAdjustFromPreset, applyAudioPreset,
+  addAdjustFromPreset, applyAudioPreset, saveMediaKit, setKitFiles, importKit,
 } from "../presets.js";
 import { VOICE_EFFECTS } from "../audiofx.js";
 
@@ -119,6 +119,91 @@ const audioSummary = (p) => {
   return [`${Math.round((a.volume ?? 1) * 100)}%`, a.fadeIn && `fade in ${a.fadeIn}s`, a.fadeOut && `fade out ${a.fadeOut}s`,
     a.denoise && "noise reduced", a.enhance && "voice enhanced", a.normalize && "levelled", a.voice && VOICE_EFFECTS[a.voice]].filter(Boolean).join(" · ");
 };
+
+const fileIcon = (kind) => (kind === "audio" ? "music" : kind === "image" ? "image" : "film");
+const kindOfName = (name) => (/\.(mp3|wav|m4a|aac|ogg|flac|opus)$/i.test(name) ? "audio" : /\.(png|jpe?g|gif|webp|bmp|avif)$/i.test(name) ? "image" : "video");
+
+/** Media › My kits: sets of files you use in every video, added to the library in one click. */
+export function MediaKitsTab() {
+  const kits = (useStore((s) => s.textPresets) || []).filter((p) => p.kind === "media");
+  const library = useStore((s) => s.project.media);
+  const [creating, setCreating] = useState(false);
+  const [open, setOpen] = useState(null);
+  const [renaming, setRenaming] = useState(null);
+  const picker = useRef();
+  const pickFor = useRef(null);
+  const desktop = window.cutlineDesktop;
+  const onDisk = Object.values(library).filter((m) => m.path);
+  const [chosen, setChosen] = useState(null);
+  const sel = chosen ?? new Set(onDisk.map((m) => m.id));
+  const filesFromPicker = (list) => [...list].map((f) => ({ path: desktop?.pathFor(f), name: f.name, kind: kindOfName(f.name) })).filter((f) => f.path);
+  const addToKit = async (kit, files) => {
+    const have = new Set(kit.look.files.map((f) => f.path));
+    await setKitFiles(kit.id, [...kit.look.files, ...files.filter((f) => !have.has(f.path))]);
+  };
+  if (!desktop) return html`<div><b class="lib-title">My kits</b>
+    <p class="muted">Media kits remember where your files are on this computer, so they need the Cutline desktop app.</p></div>`;
+  return html`<div>
+    <b class="lib-title">My kits</b>
+    <p class="muted">A kit is the set of music, sound effects and clips you use in every video. One click adds them all to the library.</p>
+    <input ref=${picker} type="file" multiple accept="video/*,image/*,audio/*" hidden onChange=${async (e) => {
+      const files = filesFromPicker(e.target.files); e.target.value = "";
+      if (pickFor.current === "new") {
+        if (!files.length) return;
+        let name = "My video kit", n = 2;
+        while (kits.some((k) => k.name === name)) name = `My video kit ${n++}`;
+        await saveMediaKit(name, files);
+        const made = (getState().textPresets || []).find((k) => k.kind === "media" && k.name === name);
+        if (made) { setOpen(made.id); setRenaming(made.id); }
+      }
+      else { const kit = kits.find((k) => k.id === pickFor.current); if (kit) await addToKit(kit, files); }
+    }} />
+    ${!creating && html`<div class="row" style=${{ marginBottom: "8px" }}>
+      <button class="primary" disabled=${!onDisk.length} title=${onDisk.length ? "Make a kit from files in the library" : "Import some files first"} onClick=${() => { setChosen(null); setCreating(true); }}>
+        <i class="ico icon-package-plus" /> Kit from library</button>
+      <button onClick=${() => { pickFor.current = "new"; picker.current.click(); }}><i class="ico icon-folder-open" /> Kit from files…</button>
+    </div>`}
+    ${creating && html`<div class="kit-create">
+      <p class="muted">Tick the files to keep in the kit:</p>
+      <div class="kit-files">
+        ${onDisk.map((m) => html`<label key=${m.id} class="check"><input type="checkbox" checked=${sel.has(m.id)}
+          onChange=${(e) => { const n = new Set(sel); if (e.target.checked) n.add(m.id); else n.delete(m.id); setChosen(n); }} />
+          <i class=${"ico icon-" + fileIcon(m.kind)} /> <span class="ell">${m.name}</span></label>`)}
+      </div>
+      <div class="preset-name">
+        <input id="kit-name" autoFocus placeholder="Kit name, e.g. Minecraft essentials" onKeyDown=${(e) => e.key === "Enter" && e.target.nextElementSibling.click()} />
+        <button class="primary" disabled=${!sel.size} onClick=${async () => {
+          const files = onDisk.filter((m) => sel.has(m.id)).map((m) => ({ path: m.path, name: m.name, kind: m.kind }));
+          await saveMediaKit(document.getElementById("kit-name").value, files); setCreating(false);
+        }}>Save kit</button>
+        <button onClick=${() => setCreating(false)}>Cancel</button>
+      </div>
+    </div>`}
+    ${!kits.length && !creating && html`<p class="muted">No kits yet. Import your usual files, then press <b>Kit from library</b> — or pick them directly with <b>Kit from files…</b>.</p>`}
+    ${kits.map((k) => html`<div key=${k.id} class="kit">
+      <div class="kit-head">
+        ${renaming === k.id
+          ? html`<input autoFocus defaultValue=${k.name} onBlur=${(e) => { renameTextPreset(k.id, e.target.value); setRenaming(null); }}
+              onKeyDown=${(e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") setRenaming(null); }} />`
+          : html`<button class="kit-title" onClick=${() => setOpen(open === k.id ? null : k.id)} title="Show the files">
+              <i class=${"ico icon-chevron-" + (open === k.id ? "down" : "right")} /> <b>${k.name}</b> <small>${k.look.files.length} file${k.look.files.length === 1 ? "" : "s"}</small></button>`}
+        <button class="primary kit-add" onClick=${() => importKit(k)} title="Add every file of this kit to the library"><i class="ico icon-plus" /> Add all</button>
+      </div>
+      ${open === k.id && html`<div class="kit-files">
+        ${k.look.files.map((f, i) => html`<div key=${f.path} class="kit-file" title=${f.path}>
+          <i class=${"ico icon-" + fileIcon(f.kind)} /> <span class="ell">${f.name}</span>
+          <button class="mini" title="Remove from kit" onClick=${() => setKitFiles(k.id, k.look.files.filter((_, j) => j !== i))}>✕</button>
+        </div>`)}
+        <div class="ptile-btns">
+          <button title="Add files to this kit" onClick=${() => { pickFor.current = k.id; picker.current.click(); }}><i class="ico icon-plus" /> files</button>
+          <button title="Add the library's files to this kit" onClick=${() => addToKit(k, onDisk.map((m) => ({ path: m.path, name: m.name, kind: m.kind })))}><i class="ico icon-package-plus" /> library</button>
+          <button title="Rename" onClick=${() => setRenaming(k.id)}><i class="ico icon-pencil" /></button>
+          <button title="Delete kit" onClick=${() => { if (confirm(`Delete the kit “${k.name}”? (Your files stay where they are.)`)) deleteTextPreset(k.id); }}><i class="ico icon-trash-2" /></button>
+        </div>
+      </div>`}
+    </div>`)}
+  </div>`;
+}
 
 export function AudioPresetsTab() {
   return html`<${KindPresets} kind="audio" title="My audio presets"

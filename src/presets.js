@@ -5,7 +5,7 @@
 // length) that adds a ready-styled text layer in one click. Stored on this computer: in the desktop app in
 // a file next to its settings (survives updates), in a browser in local storage.
 import { getState, setState, edit, uid, freeTrack, findItem } from "./store.js";
-import { toast, addText } from "./actions.js";
+import { toast, addText, importPaths } from "./actions.js";
 
 const KEY = "cutline.textPresets";
 const desktop = typeof window !== "undefined" ? window.cutlineDesktop : null;
@@ -65,6 +65,30 @@ export const saveAdjustPreset = (item, name) => savePreset("adjust", item, name,
 export async function saveAudioPreset(item, name) {
   const audio = Object.fromEntries(AUDIO_KEYS.filter((k) => item.audio?.[k] !== undefined).map((k) => [k, item.audio[k]]));
   await savePreset("audio", { audio }, name, ["audio"]);
+}
+
+// ---------------- media kits ----------------
+
+/** A media kit: a named list of files on this computer (music, sound effects, clips) you use in every video. */
+export async function saveMediaKit(name, files) {
+  await savePreset("media", { files }, name, ["files"]);
+}
+
+export async function setKitFiles(id, files) {
+  await write(allPresets().map((p) => (p.id === id ? { ...p, look: { ...p.look, files } } : p)));
+}
+
+/** Adds every file of a kit to the library (skipping ones already there). */
+export async function importKit(kit) {
+  const files = kit.look.files || [];
+  if (!window.cutlineDesktop) return toast("Media kits work in the desktop app (they open files from their place on your computer)");
+  toast(`Adding ${files.length} file${files.length === 1 ? "" : "s"} from “${kit.name}”…`, 4000);
+  const { added, missing, skipped } = await importPaths(files.map((f) => f.path));
+  const parts = [`Added ${added.length} file${added.length === 1 ? "" : "s"} from “${kit.name}”`];
+  if (skipped.length) parts.push(`${skipped.length} already in the library`);
+  if (missing.length) parts.push(`${missing.length} not found: ${missing.map((p) => p.split(/[\\/]/).pop()).slice(0, 3).join(", ")}`);
+  toast(parts.join(" · "), missing.length ? 8000 : 3000);
+  return added;
 }
 
 /** Adds an adjustment layer at the playhead with a preset's settings. */

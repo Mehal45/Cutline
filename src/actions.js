@@ -134,6 +134,33 @@ export async function importFiles(files, { addToTimeline = false } = {}) {
   return added;
 }
 
+/**
+ * Desktop app: adds files to the library straight from their paths on disk (no copy in memory). Files
+ * already in the library are skipped. Returns { added, missing, skipped }.
+ */
+export async function importPaths(paths) {
+  const desktop = window.cutlineDesktop;
+  if (!desktop) return { added: [], missing: paths, skipped: [] };
+  const have = new Set(Object.values(getState().project.media).map((m) => m.path).filter(Boolean));
+  const added = [], missing = [], skipped = [];
+  for (const path of paths) {
+    if (have.has(path)) { skipped.push(path); continue; }
+    if (!(await desktop.exists(path))) { missing.push(path); continue; }
+    const name = path.split(/[\\/]/).pop();
+    const kind = kindOf({ type: "", name });
+    if (!kind) { missing.push(path); continue; }
+    const url = desktop.fileUrl(path);
+    const meta = await probe(kind, url);
+    if (!meta) { missing.push(path); continue; }
+    const id = uid();
+    const file = { name, type: "", arrayBuffer: () => fetch(url).then((r) => { if (!r.ok) throw new Error("missing"); return r.arrayBuffer(); }) };
+    edit((p) => { p.media[id] = { id, name, kind, url, file, path, ...meta }; });
+    added.push(id);
+    have.add(path);
+  }
+  return { added, missing, skipped };
+}
+
 /** The first clip on an empty main track sets the canvas aspect, like most editors do (mutates). */
 function setCanvasFromFirstClip(p, media) {
   if (p.main.length || !media.w || !media.h) return;
