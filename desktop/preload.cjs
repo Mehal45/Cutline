@@ -21,6 +21,9 @@ contextBridge.exposeInMainWorld("cutlineDesktop", {
   pendingOpen: () => ipcRenderer.invoke("cutline:pending-open"),
   /** Projects opened from Explorer while Cutline is already running. */
   onOpenFile: (cb) => ipcRenderer.on("cutline:open-file", (_e, f) => cb(f)),
+  /** Frame index + sound of a big MKV recording (scanned once, then cached): { index, audioPath }. */
+  scan: (src) => ipcRenderer.invoke("cutline:scan", src),
+  onScanProgress: (cb) => ipcRenderer.on("cutline:scan-progress", (_e, m) => cb(m)),
   proxyOpen: (src) => ipcRenderer.invoke("cutline:proxy-open", src),
   proxyWrite: (part, position, data) => ipcRenderer.invoke("cutline:proxy-write", part, position, data),
   proxyDone: (part, final, audio) => ipcRenderer.invoke("cutline:proxy-done", part, final, audio),

@@ -208,8 +208,44 @@ function audioConfig(codec, priv, rate, channels) {
   return null;
 }
 
+/** Decodes audio packets ({ ts, dur, data }) into an AudioBuffer. */
+export async function decodePackets(config, samples) {
+  if (!(await AudioDecoder.isConfigSupported(config).catch(() => ({ supported: false }))).supported) return null;
+  const rate = config.sampleRate, channels = config.numberOfChannels;
+  const last = samples.reduce((m, s) => Math.max(m, s.ts + s.dur), 0);
+  const length = Math.max(1, Math.ceil((last / 1e6) * rate));
+  const out = Array.from({ length: channels }, () => new Float32Array(length));
+  let error = null;
+  const dec = new AudioDecoder({
+    output: (d) => {
+      const at = Math.round((d.timestamp / 1e6) * rate);
+      for (let c = 0; c < Math.min(channels, d.numberOfChannels); c++) {
+        const tmp = new Float32Array(d.numberOfFrames);
+        d.copyTo(tmp, { planeIndex: c, format: "f32-planar" });
+        if (at >= 0) out[c].set(tmp.subarray(0, Math.max(0, Math.min(tmp.length, length - at))), at);
+      }
+      d.close();
+    },
+    error: (e) => (error = e),
+  });
+  dec.configure(config);
+  for (let i = 0; i < samples.length; i++) {
+    const s = samples[i];
+    if (s.ts >= 0) dec.decode(new EncodedAudioChunk({ type: "key", timestamp: s.ts, duration: s.dur, data: s.data }));
+    if (i % 400 === 0) { while (dec.decodeQueueSize > 200) await new Promise((r) => setTimeout(r, 5)); if (error) throw error; }
+  }
+  await dec.flush();
+  dec.close();
+  const buf = new AudioBuffer({ length, numberOfChannels: channels, sampleRate: rate });
+  out.forEach((data, c) => buf.copyToChannel(data, c));
+  return buf;
+}
+
 /** The audio track of a big file, decoded into an AudioBuffer a piece at a time. Null if there's no usable sound. */
 export async function decodeBigAudio(media) {
+  const { scannedAudio } = await import("./decode.js");
+  const scanned = await scannedAudio(media).catch(() => null);
+  if (scanned) return decodePackets(scanned.config, scanned.samples);
   const src = await byteSource(media);
   let samples, config;
   if (/\.(mkv|webm)$/i.test(media.name)) {

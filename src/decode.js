@@ -15,10 +15,74 @@ export function demux(media) {
 /** Files bigger than this are indexed and read piece by piece instead of loaded whole. */
 const lazyBytes = () => globalThis.CUTLINE_LAZY_BYTES ?? 512e6;
 
+const isMatroska = (media) => /\.(mkv|webm)$/i.test(media.name || "");
+const desk = () => (typeof window !== "undefined" ? window.cutlineDesktop : null);
+
 async function demuxMedia(media) {
   const src = await byteSource(media);
+  // Desktop: MKV recordings use their saved scan (one read of the file, ever) instead of being parsed here.
+  if (isMatroska(media) && media.path && desk()?.scan) return demuxScanned(media, src);
   if (src.size > lazyBytes()) return demuxLazy(src);
   return demuxFile(media.file);
+}
+
+/** Video frames of an MKV from its scan; frames are read from the file as they're decoded. */
+async function demuxScanned(media, src) {
+  const { index } = await desk().scan(media.path);
+  const v = index.video;
+  const priv = v?.priv ? Uint8Array.from(atob(v.priv), (c) => c.charCodeAt(0)) : null;
+  const codec = v && codecString(v.codec, priv);
+  if (!codec || !index.frames.length) return null;
+  const config = { codec, codedWidth: v.width, codedHeight: v.height, ...(priv && /AVC|HEVC|AV1/.test(v.codec) ? { description: priv } : {}) };
+  const support = await VideoDecoder.isConfigSupported(config).catch(() => ({ supported: false }));
+  if (!support.supported) return null;
+  const toUs = (tc) => (tc * index.scale) / 1000;
+  const pts = [...new Set(index.frames.map((f) => f[2]))].sort((a, b) => a - b);
+  const nextOf = new Map(pts.map((x, i) => [x, pts[i + 1]]));
+  const t0 = toUs(pts[0]);
+  const frameUs = v.frameNs ? v.frameNs / 1000 : 16667;
+  const samples = index.frames.map(([offset, size, tc, key]) => {
+    const n = nextOf.get(tc);
+    return { key: !!key, ts: toUs(tc) - t0, dur: n != null ? toUs(n) - toUs(tc) : frameUs, offset, size };
+  });
+  return { config, samples, src, lazy: true };
+}
+
+/** The scan's sound packets for an MKV ({ config, samples with data }), or null. Shared with media-audio.js. */
+export async function scannedAudio(media) {
+  if (!isMatroska(media) || !media.path || !desk()?.scan) return null;
+  const { index, audioPath } = await desk().scan(media.path);
+  const a = index.audio;
+  if (!a || !index.packets.length) return null;
+  const bytes = new Uint8Array(await (await fetch(desk().fileUrl(audioPath))).arrayBuffer());
+  const priv = a.priv ? Uint8Array.from(atob(a.priv), (c) => c.charCodeAt(0)) : null;
+  const toUs = (tc) => (tc * index.scale) / 1000;
+  const vt = index.frames.length ? Math.min(...index.frames.slice(0, 200).map((f) => f[2])) : index.packets[0][0];
+  let off = 0;
+  const samples = index.packets.map(([tc, size], i) => {
+    const s = { ts: toUs(tc) - toUs(vt), data: bytes.subarray(off, off + size) };
+    off += size;
+    const next = index.packets[i + 1];
+    s.dur = next ? toUs(next[0]) - toUs(tc) : 21333;
+    return s;
+  });
+  const codec = a.codec === "A_AAC" ? "mp4a.40.2" : a.codec === "A_OPUS" ? "opus" : null;
+  if (!codec) return null;
+  return { config: { codec, sampleRate: a.rate || 48000, numberOfChannels: a.channels || 2, ...(priv ? { description: priv } : {}) }, samples };
+}
+
+/** Starts scanning big MKV recordings in the background as soon as they're in the library. */
+export function startScans(getState, setState) {
+  if (!desk()?.scan) return;
+  const started = new Set();
+  desk().onScanProgress?.(({ path, progress }) => setState({ scans: { ...getState().scans, [path]: progress } }));
+  setInterval(() => {
+    for (const m of Object.values(getState().project.media)) {
+      if (m.kind !== "video" || !m.path || m.missing || !isMatroska(m) || started.has(m.path)) continue;
+      started.add(m.path);
+      desk().scan(m.path).catch((e) => console.warn("scan", m.name, e));
+    }
+  }, 2000);
 }
 
 /** Big file: an index of where every frame is; SegmentDecoder reads frames from disk as it goes. */

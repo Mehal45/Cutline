@@ -10,7 +10,9 @@ export function decodeMedia(media) {
     decoded.set(media.id, (async () => {
       if (media.kind !== "video" && media.kind !== "audio") return null;
       // Big recordings: decoded a piece at a time (loading a multi-GB file whole would fail).
-      const big = /\.(mkv|webm|mp4|m4v|mov)$/i.test(media.name) && (await byteSource(media).then((s) => s.size).catch(() => 0)) > (globalThis.CUTLINE_LAZY_BYTES ?? 512e6);
+      // MKV on the desktop: the saved scan has the sound (no need to read the recording again).
+      const scannedMkv = /\.(mkv|webm)$/i.test(media.name) && media.path && window.cutlineDesktop?.scan;
+      const big = scannedMkv || (/\.(mkv|webm|mp4|m4v|mov)$/i.test(media.name) && (await byteSource(media).then((s) => s.size).catch(() => 0)) > (globalThis.CUTLINE_LAZY_BYTES ?? 512e6));
       if (big) return decodeBigAudio(media).catch((e) => { console.warn("audio", media.name, e); return null; });
       try {
         const ctx = new OfflineAudioContext(1, 1, 48000);

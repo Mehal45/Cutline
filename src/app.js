@@ -34,6 +34,7 @@ const additiveKey = (e) => e.shiftKey || e.ctrlKey || e.metaKey;
 setState({ snap: true, timelineH: Math.max(260, Math.min(460, Math.round(window.innerHeight * 0.38))), previewQuality: (() => { try { return +localStorage.getItem("cutline.previewQuality") || 1; } catch { return 1; } })() });
 
 startProxies();
+import("./decode.js").then((d) => d.startScans(getState, setState));
 
 /** Smooth-preview toggle with the background progress. */
 function ProxyButton() {
@@ -214,6 +215,7 @@ function MediaTab() {
   const media = useStore((s) => s.project.media);
   const previewing = useStore((s) => s.preview?.mediaId);
   const proxies = useStore((s) => s.proxies);
+  const scans = useStore((s) => s.scans);
   const input = useRef();
   const [drag, setDrag] = useState(false);
   const items = Object.values(media);
@@ -238,6 +240,7 @@ function MediaTab() {
             : m.kind === "compound" ? html`<div class="audio-thumb compound-thumb"><${Icon} n="layers" size=${26} /></div>`
             : html`<video src=${m.url ? m.url + "#t=0.5" : ""} muted preload="metadata" />`}
           <span class="mdur">${m.missing ? "missing" : m.kind === "image" ? "" : fmt(m.duration).replace(/\.\d+$/, "")}</span>
+          ${m.path && scans?.[m.path] != null && scans[m.path] < 1 && html`<span class="mproxy busy" title="Reading this recording once so exports are fast">⏳ ${Math.round(scans[m.path] * 100)}%</span>`}
           ${proxies?.[m.id]?.state === "ready" && html`<span class="mproxy" title="Smooth preview ready">⚡</span>`}
           ${proxies?.[m.id]?.state === "building" && html`<span class="mproxy busy" title="Preparing smooth preview…">${Math.round((proxies[m.id].progress || 0) * 100)}%</span>`}
           ${m.noPicture && html`<span class="mwarn" title="This video's format can't be shown. Convert it to MP4 (H.264).">⚠</span>`}

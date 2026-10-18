@@ -107,6 +107,16 @@ async function sendOpen(p) {
 }
 app.on("open-file", (e, p) => { e.preventDefault(); sendOpen(p); }); // macOS
 
+// Big recordings are scanned once (frame index + sound) on a worker thread; see scan.cjs.
+const { getScan } = require("./scan.cjs");
+ipcMain.handle("cutline:scan", async (e, src) => {
+  if (typeof src !== "string" || !path.isAbsolute(src) || !fs.existsSync(src)) return null;
+  const send = (p) => { try { e.sender.send("cutline:scan-progress", { path: src, progress: p }); } catch { /* window gone */ } };
+  const r = await getScan(app.getPath("userData"), src, send);
+  send(1);
+  return r;
+});
+
 ipcMain.handle("cutline:autosave", (_e, json) => fs.promises.writeFile(autosavePath(), json, "utf8"));
 ipcMain.handle("cutline:recover", async () => {
   try { return await fs.promises.readFile(autosavePath(), "utf8"); } catch { return null; }
