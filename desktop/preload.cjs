@@ -17,6 +17,10 @@ contextBridge.exposeInMainWorld("cutlineDesktop", {
   loadPrefs: () => ipcRenderer.invoke("cutline:prefs-load"),
   savePrefs: (prefs) => ipcRenderer.invoke("cutline:prefs-save", prefs),
   setTitle: (name) => ipcRenderer.send("cutline:title", name),
+  /** The project Cutline was started with (Open with / double-click), once. */
+  pendingOpen: () => ipcRenderer.invoke("cutline:pending-open"),
+  /** Projects opened from Explorer while Cutline is already running. */
+  onOpenFile: (cb) => ipcRenderer.on("cutline:open-file", (_e, f) => cb(f)),
   proxyOpen: (src) => ipcRenderer.invoke("cutline:proxy-open", src),
   proxyWrite: (part, position, data) => ipcRenderer.invoke("cutline:proxy-write", part, position, data),
   proxyDone: (part, final, audio) => ipcRenderer.invoke("cutline:proxy-done", part, final, audio),

@@ -92,6 +92,21 @@ ipcMain.handle("cutline:open", async (e) => {
   if (r.canceled || !r.filePaths[0]) return null;
   return { path: r.filePaths[0], text: await fs.promises.readFile(r.filePaths[0], "utf8") };
 });
+// Projects opened from Explorer ("Open with Cutline", double-click) arrive as a command-line argument.
+const projectArg = (argv) => argv.slice(1).find((a) => /\.cutline$/i.test(a) && fs.existsSync(a)) || null;
+let pendingOpen = projectArg(process.argv);
+const readProject = async (p) => ({ path: p, text: await fs.promises.readFile(p, "utf8") });
+ipcMain.handle("cutline:pending-open", async () => {
+  const p = pendingOpen;
+  pendingOpen = null;
+  return p ? readProject(p) : null;
+});
+async function sendOpen(p) {
+  if (!p || !win) { pendingOpen = p || pendingOpen; return; }
+  try { win.webContents.send("cutline:open-file", await readProject(p)); } catch { /* unreadable file */ }
+}
+app.on("open-file", (e, p) => { e.preventDefault(); sendOpen(p); }); // macOS
+
 ipcMain.handle("cutline:autosave", (_e, json) => fs.promises.writeFile(autosavePath(), json, "utf8"));
 ipcMain.handle("cutline:recover", async () => {
   try { return await fs.promises.readFile(autosavePath(), "utf8"); } catch { return null; }
@@ -183,7 +198,10 @@ async function createWindow() {
 // One window only: opening Cutline again focuses the existing one.
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
-  app.on("second-instance", () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
+  app.on("second-instance", (_e, argv) => {
+    if (win) { if (win.isMinimized()) win.restore(); win.focus(); }
+    sendOpen(projectArg(argv));
+  });
   app.whenReady().then(() => {
     // The editor has its own shortcuts (Ctrl+= zooms the timeline, not the page). macOS keeps a minimal
     // menu so Cmd+C/V/X/A/Q still work in text boxes.

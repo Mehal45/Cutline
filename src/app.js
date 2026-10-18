@@ -27,7 +27,7 @@ import { EFFECT_CATEGORIES } from "./fx.js";
 import { linkWebFonts, loadProjectFonts, loadSystemFonts, loadRecentFonts } from "./ui/fonts.js";
 import { loadTextPresets, addDefaultText } from "./presets.js";
 import {
-  saveProject, openProject, newProject, relink, startAutosave, checkRecovery, loadProject, desktop, projectName,
+  saveProject, openProject, newProject, relink, startAutosave, checkRecovery, loadProject, desktop, projectName, openFromDisk,
 } from "./project-io.js";
 
 const additiveKey = (e) => e.shiftKey || e.ctrlKey || e.metaKey;
@@ -713,7 +713,16 @@ function RelinkBar() {
 
 function RecoveryBar() {
   const [text, setText] = useState(null);
-  useEffect(() => { checkRecovery().then((t) => t && setText(t)); }, []);
+  useEffect(() => {
+    // A project opened from Explorer wins over offering to restore the last session.
+    (async () => {
+      const f = await desktop?.pendingOpen?.();
+      if (f) return openFromDisk(f);
+      const t = await checkRecovery();
+      if (t) setText(t);
+    })();
+    desktop?.onOpenFile?.((f) => openFromDisk(f));
+  }, []);
   if (!text) return null;
   const dismiss = () => { desktop?.clearAutosave(); setText(null); };
   return html`<div class="relink">

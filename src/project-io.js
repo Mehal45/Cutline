@@ -138,6 +138,18 @@ export async function openProject(file) {
   }
 }
 
+/** Opens a project Explorer handed to the desktop app ({ path, text }). */
+export async function openFromDisk(f) {
+  if (!f) return;
+  if (isDirty() && !confirm("Discard unsaved changes to the current project?")) return;
+  try {
+    const missing = await loadProject(f.text, f.path);
+    toast(missing.length ? `Opened — ${missing.length} media file${missing.length > 1 ? "s" : ""} need relinking` : "Project opened");
+  } catch (err) {
+    toast("Couldn't open: " + err.message);
+  }
+}
+
 export function newProject() {
   if (isDirty() && !confirm("Discard unsaved changes to the current project?")) return;
   const project = { width: 1920, height: 1080, fps: 30, media: {}, main: [], texts: [], overlays: [], audio: [], effects: [] };
