@@ -7,7 +7,7 @@ import { allVideoElements, clipSpeed, elementFor } from "./engine.js";
 import { resumeLive } from "./audiofx.js";
 import { splitKeyframes, shiftKeyframes, setKey, removeKey, keyAt, propAt, hasKeys, setStatic } from "./keyframes.js";
 import { EFFECTS, FILTERS } from "./fx.js";
-import { hasCurve, sourceAt, sourceSpan, subCurve } from "./speed.js";
+import { hasCurve, sourceAt, sourceSpan, subCurve, rampEnd, rampStart, startSpeed, endSpeed } from "./speed.js";
 
 /** Splits a clip's speed curve at local time `local` between two halves a (before) and b (after); mutates. */
 function splitCurve(a, b, local) {
@@ -272,6 +272,7 @@ function splitTimed(p, lane, ids, time) {
     splitCurve(a, b, local);
     a.dur = local;
     if (a.words) { a.words = a.words.filter((w) => w.t0 < time); b.words = b.words.filter((w) => w.t0 >= time); }
+    if (b.sound) delete b.sound; // a text's sound belongs to its first piece
     if (a.keyframes) [a.keyframes, b.keyframes] = splitKeyframes(a, local);
     // Text pieces each keep the original in and out animation; clips/layers only animate at the outer ends.
     if (a.anim && lane !== "texts") { b.anim = { in: { ...a.anim.in, type: "none" }, out: a.anim.out }; a.anim.out = { ...a.anim.out, type: "none" }; }
@@ -297,6 +298,7 @@ export function splitAtPlayhead() {
         b.dur = a.start + a.dur - time;
         a.dur = time - a.start;
         if (a.words) { a.words = a.words.filter((w) => w.t0 < time); b.words = b.words.filter((w) => w.t0 >= time); }
+        if (b.sound) delete b.sound;
         if (a.keyframes) [a.keyframes, b.keyframes] = splitKeyframes(a, time - t.start);
         p.texts.splice(i + 1, 0, b);
       }
@@ -395,6 +397,73 @@ export function trimToPlayhead(side) {
   });
   if (!n) toast("Move the playhead inside the clip first");
   else if (side === "left" && targets[0].kind === "main") seek(layoutMain(getState().project).find((s) => s.id === targets[0].id)?.start ?? time);
+}
+
+/**
+ * Smooths the speed change at a cut between two touching clips (main track, or the same layer/audio
+ * track). mode: "both" glides from one speed to the other across the cut, "out" eases the left clip into
+ * the right clip's speed, "in" eases the right clip in from the left clip's speed. `seconds` = ramp length.
+ */
+export function easeSpeedAtCut(kind, leftId, rightId, mode = "both", seconds = getState().speedRamp ?? 0.6) {
+  const p0 = getState().project;
+  const a0 = findItem(p0, kind, leftId), b0 = findItem(p0, kind, rightId);
+  if (!a0 || !b0) return;
+  const va = endSpeed(a0), vb = startSpeed(b0);
+  if (Math.abs(Math.log(va / vb)) < 0.02) return toast("Both clips already play at the same speed at this cut");
+  const mid = Math.sqrt(va * vb);
+  edit((p) => {
+    const a = findItem(p, kind, leftId), b = findItem(p, kind, rightId);
+    if (mode === "both") { rampEnd(a, mid, seconds / 2); rampStart(b, mid, seconds / 2); }
+    else if (mode === "out") rampEnd(a, vb, seconds);
+    else rampStart(b, va, seconds);
+    if (kind !== "main") {
+      // Layers/audio: keep the right clip butted against the left one after the left's length changed.
+      b.start = a.start + a.dur;
+    }
+  });
+  toast(mode === "both" ? `Speed eases ${+va.toFixed(2)}× → ${+vb.toFixed(2)}× across the cut` : mode === "out" ? `Left clip eases into ${+vb.toFixed(2)}×` : `Right clip eases in from ${+va.toFixed(2)}×`);
+}
+
+/** The clip right after / before an item on its own track, if they touch. */
+export function neighbour(project, kind, item, dir) {
+  if (kind === "main") {
+    const i = project.main.findIndex((s) => s.id === item.id);
+    return project.main[i + dir] || null;
+  }
+  const lane = LANES[kind];
+  const edge = dir > 0 ? item.start + item.dur : item.start;
+  return (project[lane] || []).find((x) => x.id !== item.id && (x.track ?? 0) === (item.track ?? 0)
+    && Math.abs((dir > 0 ? x.start : x.start + x.dur) - edge) < 0.05) || null;
+}
+
+/** Removes any speed curve from the selected clips (back to their average constant speed). */
+export function resetSpeedCurve(kind, id) {
+  // Same footage and length: the clip plays at its average speed instead of the curve.
+  edit((p) => { const it = findItem(p, kind, id); if (it && hasCurve(it)) { const v = sourceSpan(it) / it.dur; delete it.speedCurve; it.speed = v; } });
+}
+
+// ---------------- sounds on texts ----------------
+
+/** Gives texts a sound (from the library). `ids` default: the selected texts. Keeps their timing setting. */
+export function setTextSound(mediaId, ids) {
+  const targets = new Set(ids ?? getState().selection.filter((s) => s.kind === "text").map((s) => s.id));
+  if (!targets.size) return toast("Select a text first");
+  edit((p) => p.texts.forEach((t) => {
+    if (!targets.has(t.id)) return;
+    const m = p.media[mediaId];
+    t.sound = mediaId ? { when: "anim", volume: 1, ...(t.sound || {}), mediaId, name: m?.name, ...(m?.path ? { path: m.path } : {}) } : undefined;
+    if (!mediaId) delete t.sound;
+  }));
+  if (mediaId) toast(`Sound added to ${targets.size} text${targets.size > 1 ? "s" : ""}`);
+}
+
+/** Copies one text's sound (file, timing, volume) to every text, or every caption. */
+export function soundToAll(fromId, onlyCaptions = false) {
+  const src = getState().project.texts.find((t) => t.id === fromId)?.sound;
+  if (!src) return;
+  let n = 0;
+  edit((p) => p.texts.forEach((t) => { if (t.id !== fromId && (!onlyCaptions || t.caption)) { t.sound = { ...src }; n++; } }));
+  toast(`Same sound on ${n} more text${n === 1 ? "" : "s"}`);
 }
 
 /** Mirrors the selected clips/layers left-right (toggle). */

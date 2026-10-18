@@ -1,7 +1,8 @@
 // Rendering engine: decides what is visible at time t and draws it.
 // Clips use Canvas 2D; transitions blend two clip frames in a WebGL shader; colour, filters and
 // effects run in fx.js. Layer order, bottom to top: main track → overlay tracks → timeline effects → texts.
-import { layoutMain } from "./store.js";
+import { layoutMain, getState } from "./store.js";
+import { proxySrc } from "./proxy.js";
 import { valueAt, propAt } from "./keyframes.js";
 import { applyFx, hasFx, ADJUST } from "./fx.js";
 import { cutoutFrame } from "./segment.js";
@@ -73,9 +74,32 @@ export function seekClipElement(seg, media, time) {
   return seekTo(el, time);
 }
 
+/**
+ * Which file the preview plays for an item: its smooth-preview proxy when there is one (never while
+ * exporting), else the original. A proxy without sound is only used while paused/scrubbing or when muted.
+ */
+function previewSrc(item, media) {
+  if (renderLock.exporting || media.kind !== "video") return media.url;
+  const needSound = getState().playing && !item.mute;
+  return proxySrc(media, needSound) || media.url;
+}
+
 export function elementFor(seg, media) {
   let el = elements.get(seg.id);
-  if (el && el.dataset.src === media.url) return el;
+  const src = previewSrc(seg, media);
+  if (el && el.dataset.src === src) return el;
+  if (el instanceof HTMLMediaElement) {
+    // Switching between the original and its proxy: carry on from the same moment.
+    const at = el.currentTime;
+    el.pause();
+    el.removeAttribute("src");
+    el.load();
+    el = null;
+    elements.delete(seg.id);
+    const next = elementFor(seg, media);
+    if (next instanceof HTMLMediaElement) next.addEventListener("loadedmetadata", () => { if (next.currentTime < 0.01) next.currentTime = at; }, { once: true });
+    return next;
+  }
   if (media.kind === "image") {
     el = new Image();
     el.src = media.url;
@@ -85,12 +109,12 @@ export function elementFor(seg, media) {
     el.preload = "auto";
   } else {
     el = document.createElement("video");
-    el.src = media.url;
+    el.src = src;
     el.preload = "auto";
     el.playsInline = true;
     el.crossOrigin = "anonymous";
   }
-  el.dataset.src = media.url;
+  el.dataset.src = el instanceof HTMLVideoElement ? src : media.url;
   elements.set(seg.id, el);
   return el;
 }
@@ -436,6 +460,34 @@ export function activeTimed(list, t) {
   return out;
 }
 
+/**
+ * When a text's sound starts, in seconds after the text starts. text.sound.when:
+ *  "anim" (default) — as the in-animation is nearly done (85% through it), so the sound lands as the text settles
+ *  "start" — as soon as the text appears
+ *  "custom" — text.sound.delay seconds after it appears
+ */
+export function textSoundOffset(text) {
+  const s = text.sound || {};
+  if (s.when === "start") return 0;
+  if (s.when === "custom") return Math.max(0, s.delay || 0);
+  const a = text.anim?.in;
+  return a && a.type !== "none" ? (a.dur || 0) * 0.85 : 0;
+}
+
+/** Text sounds as audio items, so they play and export like any other audio (they move with their text). */
+export function textSounds(project) {
+  const out = [];
+  for (const t of project.texts || []) {
+    const s = t.sound;
+    const media = s && project.media[s.mediaId];
+    if (!media || media.missing) continue;
+    const dur = Math.max(0.05, (media.duration || 1) - (s.in || 0));
+    out.push({ id: t.id + "~snd", mediaId: s.mediaId, start: t.start + textSoundOffset(t), in: s.in || 0, dur,
+      audio: { volume: s.volume ?? 1 }, ...(s.mute ? { mute: true } : {}), track: "text" });
+  }
+  return out;
+}
+
 /** Overlay layers at t, bottom track first. */
 export const activeOverlays = (project, t) => activeTimed(project.overlays, t).sort((a, b) => (a.item.track ?? 0) - (b.item.track ?? 0));
 
@@ -648,7 +700,7 @@ export function syncMedia(project, t, playing) {
     const muted = !playing || frozen || clips.length > 1 && c !== clips[0] || !!c.seg.mute || !!project.trackState?.main?.muted;
     position(c.seg, c.local, el, c.sourceTime, frozen, muted);
   }
-  for (const list of [project.overlays, project.audio]) {
+  for (const list of [project.overlays, project.audio, textSounds(project)]) {
     for (const o of activeTimed(list, t)) {
       const media = project.media[o.item.mediaId];
       if (!media) continue;
@@ -658,7 +710,7 @@ export function syncMedia(project, t, playing) {
         if (!el.complete) waits.push(new Promise((r) => (el.onload = r)));
         continue;
       }
-      const lane = list === project.audio ? "audio" : "overlay";
+      const lane = list === project.overlays ? "overlay" : "audio";
       position(o.item, o.local, el, o.sourceTime, false, !playing || !!o.item.mute || !!project.trackState?.[`${lane}:${o.item.track ?? 0}`]?.muted);
     }
   }
@@ -677,7 +729,7 @@ export function syncMedia(project, t, playing) {
 function prerollUpcoming(project, t, active) {
   const soon = [];
   for (const s of layoutMain(project)) if (s.start > t && s.start - t < 1.5) soon.push(s);
-  for (const list of [project.overlays, project.audio]) for (const x of list || []) if (x.start > t && x.start - t < 1.5) soon.push(x);
+  for (const list of [project.overlays, project.audio, textSounds(project)]) for (const x of list || []) if (x.start > t && x.start - t < 1.5) soon.push(x);
   for (const item of soon) {
     if (active.has(item.id)) continue;
     const media = project.media[item.mediaId];
@@ -723,29 +775,40 @@ export function volumeAt(item, lt) {
   return v;
 }
 
-// One in-flight seek per element: re-issuing the same seek every frame would restart it forever.
+// One seek in flight per element. Chromium cancels a running seek whenever currentTime is set again, so
+// re-seeking on every frame while scrubbing would never show a picture until the mouse stops. Instead a new
+// target replaces the queued one and is sought as soon as the running seek lands: frames keep coming.
 const pendingSeeks = new WeakMap(); // el -> { time, promise }
 
 function seekTo(el, time) {
-  const pending = pendingSeeks.get(el);
-  if (pending && Math.abs(pending.time - time) < 1e-4) return pending.promise;
-  const promise = new Promise((resolve) => {
-    let finished = false;
-    const done = () => {
-      if (finished) return;
-      finished = true;
-      el.removeEventListener("seeked", done);
-      el.removeEventListener("loadeddata", done);
-      if (pendingSeeks.get(el)?.promise === promise) pendingSeeks.delete(el);
-      resolve();
-    };
-    el.addEventListener("seeked", done);
-    // Seeking to the current position doesn't always fire "seeked"; first-frame data arriving also counts.
-    el.addEventListener("loadeddata", done);
-    if (el.readyState === 0) el.addEventListener("loadedmetadata", () => (el.currentTime = time), { once: true });
-    else el.currentTime = time;
-    setTimeout(done, 2000); // never hang on a bad frame
-  });
-  pendingSeeks.set(el, { time, promise });
-  return promise;
+  const running = pendingSeeks.get(el);
+  if (running) {
+    running.time = time;
+    return running.promise;
+  }
+  let resolve, timer, issued = null;
+  const st = { time, promise: new Promise((r) => (resolve = r)) };
+  const finish = () => {
+    clearTimeout(timer);
+    el.removeEventListener("seeked", landed);
+    el.removeEventListener("loadeddata", landed);
+    if (pendingSeeks.get(el) === st) pendingSeeks.delete(el);
+    resolve();
+  };
+  const go = () => {
+    clearTimeout(timer);
+    timer = setTimeout(finish, 2000); // never hang on a bad frame
+    issued = st.time;
+    el.currentTime = st.time;
+  };
+  // Seeking to the current position doesn't always fire "seeked"; first-frame data arriving also counts.
+  const landed = () => (issued !== null && Math.abs(st.time - issued) > 1e-4 ? go() : finish());
+  el.addEventListener("seeked", landed);
+  el.addEventListener("loadeddata", landed);
+  pendingSeeks.set(el, st);
+  if (el.readyState === 0) {
+    timer = setTimeout(finish, 2000);
+    el.addEventListener("loadedmetadata", go, { once: true });
+  } else go();
+  return st.promise;
 }

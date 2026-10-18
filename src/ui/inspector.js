@@ -5,12 +5,13 @@ import { clipSpeed, clipTransform, BLEND_MODES, ANIMATIONS, TRANSITIONS, itemBou
 import {
   deleteSelection, rippleDelete, copySelection, duplicateSelection, setClipSpeed, SPEED_PRESETS, freezeFrame,
   mergeClips, detachAudio, applyFilter, toast, setAnimatable, toggleKeyframe, localTime, mirrorSelection,
+  setTextSound, soundToAll,
 } from "../actions.js";
 import { ADJUST, FILTERS, EFFECTS, EFFECT_CATEGORIES } from "../fx.js";
 import { VOICE_EFFECTS } from "../audiofx.js";
 import { cutoutStatus, loadCutout } from "../segment.js";
 import { uid } from "../store.js";
-import { html, Field, Section, KSlider, Slider, CurveEditor, Icon } from "./kit.js";
+import { html, Field, Section, KSlider, Slider, CurveEditor, Icon, db, secs } from "./kit.js";
 import { FONTS, loadFont, familyCss, canListSystemFonts, loadSystemFonts, rememberFont, fontName } from "./fonts.js";
 import { SpeedCurveEditor } from "./speedcurve.js";
 import { hasCurve } from "../speed.js";
@@ -66,10 +67,8 @@ function AnimFields({ anim, onChange, textOnly }) {
         ${opts.map(([k, v]) => html`<option value=${k}>${v.label}</option>`)}
       </select>
     <//>
-    <${Field} label="Duration">
-      <input type="range" min="0.1" max="2" step="0.05" value=${anim[key].dur}
-        onChange=${(e) => onChange(key, { dur: +e.target.value })} />
-    <//>
+    <${Slider} label="Duration" value=${anim[key].dur} min=${0.05} max=${3} step=${0.05} format=${secs}
+      onChange=${(v) => onChange(key, { dur: v })} />
   </div>`;
   return html`<div>${part("in", "In animation")}${part("out", "Out animation")}</div>`;
 }
@@ -85,14 +84,14 @@ function SpeedFields({ speed, ids, kind, id }) {
   return html`<div class="speed">
     ${curveTab}
     ${item && hasCurve(item) && html`<p class="muted">This clip has a speed curve; picking a speed below replaces it.</p>`}
-    <${Field} label=${`Speed ${speed.toFixed(2).replace(/\.?0+$/, "")}×`}>
+    <${Field} label="Speed">
       <div class="speed-chips">
         ${SPEED_PRESETS.map((v) => html`<button key=${v} class=${Math.abs(speed - v) < 1e-3 ? "chip on" : "chip"}
           onClick=${() => setClipSpeed(v, ids)}>${v}×</button>`)}
       </div>
-      <input type="range" min="0.1" max="10" step="0.05" value=${speed}
-        onChange=${(e) => setClipSpeed(+e.target.value, ids)} />
     <//>
+    <${Slider} label="Speed" value=${speed} min=${0.1} max=${10} step=${0.05} format=${(v) => `${+v.toFixed(2)}×`}
+      onChange=${(v) => setClipSpeed(v, ids)} />
   </div>`;
 }
 
@@ -210,14 +209,10 @@ function SourceSection({ kind, item, media }) {
   const speed = clipSpeed(item);
   const maxSrc = media?.kind === "image" ? 1e9 : media.duration;
   return html`<${Section} title="Timing" open=${kind === "main"}>
-    <${Field} label=${`Starts at ${(item.in || 0).toFixed(2)}s of source`}>
-      <input type="range" min="0" max=${Math.max(0, (media?.kind === "image" ? 60 : media.duration) - 0.1)} step="0.01" value=${item.in || 0}
-        onChange=${(e) => set((s) => { s.in = +e.target.value; s.dur = Math.min(s.dur, (maxSrc - s.in) / speed); })} />
-    <//>
-    <${Field} label=${`Duration ${item.dur.toFixed(2)}s on timeline`}>
-      <input type="range" min="0.2" max=${media?.kind === "image" ? 30 : (media.duration - (item.in || 0)) / speed} step="0.01" value=${item.dur}
-        onChange=${(e) => set((s) => (s.dur = +e.target.value))} />
-    <//>
+    <${Slider} label="Source start" value=${item.in || 0} min=${0} max=${Math.max(0, (media?.kind === "image" ? 60 : media.duration) - 0.1)}
+      format=${secs} onChange=${(v, live) => set((s) => { s.in = v; s.dur = Math.min(s.dur, (maxSrc - s.in) / speed); }, live)} />
+    <${Slider} label="Duration" value=${item.dur} min=${0.2} max=${media?.kind === "image" ? 30 : (media.duration - (item.in || 0)) / speed}
+      format=${secs} onChange=${(v, live) => set((s) => (s.dur = v), live)} />
   <//>`;
 }
 
@@ -322,7 +317,7 @@ export function AudioSection({ kind, item, media }) {
   return html`<div>
     <${Section} title="Volume">
       <label class="check"><input type="checkbox" checked=${!!item.mute} onChange=${(e) => set((s) => (s.mute = e.target.checked || undefined))} /> Mute</label>
-      <${KSlider} kind=${kind} id=${item.id} path="volume" label="Volume" min=${0} max=${2} fallback=${au.volume ?? 1} format=${pct} />
+      <${KSlider} kind=${kind} id=${item.id} path="volume" label="Volume" min=${0} max=${2} fallback=${au.volume ?? 1} format=${db} />
       <${Slider} label="Fade in" value=${au.fadeIn || 0} min=${0} max=${Math.min(10, item.dur / 2)} step=${0.05} format=${(v) => v.toFixed(2) + "s"} onChange=${(v, live) => setAu("fadeIn", v, live)} />
       <${Slider} label="Fade out" value=${au.fadeOut || 0} min=${0} max=${Math.min(10, item.dur / 2)} step=${0.05} format=${(v) => v.toFixed(2) + "s"} onChange=${(v, live) => setAu("fadeOut", v, live)} />
       <p class="muted">Above 100% plays louder in the preview and the export.</p>
@@ -420,6 +415,49 @@ function VisualInspector({ kind, item, project }) {
 }
 
 // ---------------- text ----------------
+
+/** Media in the library that can be a text's sound (audio files, and videos for their sound). */
+const soundChoices = (media) => Object.values(media).filter((m) => !m.missing && (m.kind === "audio" || m.kind === "video"))
+  .sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === "audio" ? -1 : 1));
+
+/** A sound that plays with the text: picked from the library, timed to the text's animation. */
+function TextSoundSection({ t }) {
+  const media = useStore((s) => s.project.media);
+  const set = liveSet("text", t.id);
+  const snd = t.sound;
+  const choices = soundChoices(media);
+  const setSnd = (k, v, live) => set((x) => (x.sound = { ...x.sound, [k]: v }), live);
+  const preview = () => {
+    const m = media[snd?.mediaId];
+    if (!m) return;
+    const a = new Audio(m.url); a.volume = Math.min(1, snd.volume ?? 1); a.currentTime = snd.in || 0; a.play().catch(() => {});
+    setTimeout(() => a.pause(), 4000);
+  };
+  return html`<${Section} title=${snd ? "Sound 🔊" : "Sound"} open=${!!snd}>
+    <div class="row">
+      <select class="kwide-sel" value=${snd?.mediaId || ""} onChange=${(e) => setTextSound(e.target.value || null, [t.id])}>
+        <option value="">${choices.length ? "No sound" : "Import a sound into the library first"}</option>
+        ${choices.map((m) => html`<option value=${m.id}>${m.kind === "audio" ? "♪" : "🎞"} ${m.name}</option>`)}
+      </select>
+      ${snd && html`<button class="ibtn" title="Listen" onClick=${preview}><${Icon} n="play" /></button>`}
+    </div>
+    ${!snd && html`<p class="muted">Tip: you can also drag a sound from the library onto a text on the timeline, or right-click a text › Add sound.</p>`}
+    ${snd && html`
+      <div class="seg-ctl">
+        ${[["anim", "After animation"], ["start", "When it appears"], ["custom", "Custom delay"]].map(([k, l]) => html`<button key=${k}
+          class=${(snd.when || "anim") === k ? "on" : ""} onClick=${() => setSnd("when", k)}>${l}</button>`)}
+      </div>
+      ${(snd.when || "anim") === "anim" && html`<p class="muted">Plays as the text's in-animation finishes (${((t.anim?.in?.type !== "none" ? t.anim?.in?.dur || 0 : 0) * 0.85).toFixed(2)}s after it appears).</p>`}
+      ${snd.when === "custom" && html`<${Slider} label="Delay after the text appears" value=${snd.delay || 0} min=${0} max=${Math.max(1, t.dur)} step=${0.01}
+        format=${(v) => v.toFixed(2) + "s"} onChange=${(v, live) => setSnd("delay", v, live)} />`}
+      <${Slider} label="Volume" value=${snd.volume ?? 1} min=${0} max=${2} format=${db} onChange=${(v, live) => setSnd("volume", v, live)} />
+      <div class="grid2">
+        <button onClick=${() => soundToAll(t.id, false)} title="Same sound, timing and volume on every text">Use on all texts</button>
+        ${t.caption ? html`<button onClick=${() => soundToAll(t.id, true)}>Use on all captions</button>`
+          : html`<button class="danger" onClick=${() => setTextSound(null, [t.id])}>Remove sound</button>`}
+      </div>`}
+  <//>`;
+}
 
 /** Font, size, weight, case, alignment and spacing. `setSt(key, value, live)` decides which texts change. */
 function TextFontFields({ st, setSt }) {
@@ -542,6 +580,7 @@ function TextInspector({ t }) {
       <textarea rows="3" value=${t.text} onChange=${(e) => set((x) => { x.text = e.target.value; delete x.words; })} />
       ${t.caption && t.words && html`<p class="muted">Editing the text removes word-by-word highlighting for this caption.</p>`}
       <${TextFontFields} st=${st} setSt=${setSt} />
+      <${TextSoundSection} t=${t} />
       <${TransformSection} kind="text" id=${t.id} />
       <${Section} title="Opacity">
         <${KSlider} kind="text" id=${t.id} path="opacity" label="Opacity" min=${0} max=${1} fallback=${1} format=${pct} />
@@ -655,10 +694,8 @@ export function Inspector() {
         ${Object.entries(TRANSITIONS).map(([k, label]) => html`<button key=${k}
           class=${seg.transition.type === k ? "chip on" : "chip"} onClick=${() => set((t) => (t.type = k))}>${label}</button>`)}
       </div>
-      <${Field} label=${`Duration ${seg.transition.dur.toFixed(2)}s`}>
-        <input type="range" min="0.2" max="2" step="0.05" value=${seg.transition.dur}
-          onChange=${(e) => set((t) => (t.dur = +e.target.value))} />
-      <//>
+      <${Slider} label="Duration" value=${seg.transition.dur} min=${0.1} max=${3} step=${0.05} format=${secs}
+        onChange=${(v) => set((t) => (t.dur = v))} />
       <button class="danger wide" onClick=${deleteSelection}>Remove transition</button>
     <//>`;
   }

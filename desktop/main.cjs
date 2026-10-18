@@ -103,6 +103,43 @@ ipcMain.handle("cutline:prefs-load", async () => {
   try { return JSON.parse(await fs.promises.readFile(prefsPath(), "utf8")); } catch { return {}; }
 });
 ipcMain.handle("cutline:prefs-save", (_e, prefs) => fs.promises.writeFile(prefsPath(), JSON.stringify(prefs ?? {}, null, 1), "utf8"));
+// Smooth-preview proxies: <userData>/proxies/<hash of path+size+date>.mp4 ("-silent" when it has no sound).
+const proxyDir = () => path.join(app.getPath("userData"), "proxies");
+const inProxyDir = (p) => typeof p === "string" && path.resolve(p).startsWith(proxyDir() + path.sep);
+const proxyHandles = new Map(); // part path -> FileHandle
+ipcMain.handle("cutline:proxy-open", async (_e, src) => {
+  if (typeof src !== "string" || !path.isAbsolute(src) || !fs.existsSync(src)) return null;
+  const st = fs.statSync(src);
+  const key = crypto.createHash("sha1").update(`${src}|${st.size}|${st.mtimeMs}`).digest("hex").slice(0, 20);
+  await fs.promises.mkdir(proxyDir(), { recursive: true });
+  const full = path.join(proxyDir(), key + ".mp4"), silent = path.join(proxyDir(), key + "-silent.mp4");
+  if (fs.existsSync(full)) return { exists: true, path: full, audio: true };
+  if (fs.existsSync(silent)) return { exists: true, path: silent, audio: false };
+  const part = path.join(proxyDir(), key + ".part");
+  await fs.promises.rm(part, { force: true });
+  return { exists: false, path: full, part };
+});
+ipcMain.handle("cutline:proxy-write", async (_e, part, position, data) => {
+  if (!inProxyDir(part)) return;
+  let fh = proxyHandles.get(part);
+  if (!fh) { fh = await fs.promises.open(part, "w"); proxyHandles.set(part, fh); }
+  const buf = Buffer.from(data.buffer ?? data, data.byteOffset ?? 0, data.byteLength);
+  await fh.write(buf, 0, buf.length, position);
+});
+const closeProxy = async (part) => { const fh = proxyHandles.get(part); proxyHandles.delete(part); await fh?.close(); };
+ipcMain.handle("cutline:proxy-done", async (_e, part, final, audio) => {
+  if (!inProxyDir(part) || !inProxyDir(final)) return null;
+  await closeProxy(part);
+  const dest = audio === false ? final.replace(/\.mp4$/, "-silent.mp4") : final;
+  await fs.promises.rename(part, dest);
+  return dest;
+});
+ipcMain.handle("cutline:proxy-abort", async (_e, part) => {
+  if (!inProxyDir(part)) return;
+  await closeProxy(part);
+  await fs.promises.rm(part, { force: true });
+});
+ipcMain.handle("cutline:proxy-clear", async () => fs.promises.rm(proxyDir(), { recursive: true, force: true }));
 ipcMain.on("cutline:title", (e, name) => BrowserWindow.fromWebContents(e.sender)?.setTitle(`${name} — Cutline`));
 
 // ---------------- window ----------------

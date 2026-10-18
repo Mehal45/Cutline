@@ -107,3 +107,37 @@ export function setSpeedCurve(item, curve) {
   item.speedCurve = curve;
   item.dur = Math.max(0.05, span / table(curve).mean);
 }
+
+// ---------------- easing speed across a cut ----------------
+
+/** Speed points describing an item's current speed (its curve, or a flat line at its constant speed). */
+function basePoints(item, from, to, n = 12) {
+  const pts = [];
+  for (let i = 0; i < n; i++) {
+    const p = from + ((to - from) * i) / (n - 1);
+    pts.push({ p, v: hasCurve(item) ? curveSpeedAt(item.speedCurve, p) : constSpeed(item) });
+  }
+  return pts;
+}
+
+/** Speed at the very start / end of an item. */
+export const startSpeed = (item) => rateAt(item, 0);
+export const endSpeed = (item) => rateAt(item, item.dur);
+
+/**
+ * Makes an item's speed glide to `toV` over its last `seconds` (mutates; footage kept, length adjusts).
+ * Used for "ease into the next clip".
+ */
+export function rampEnd(item, toV, seconds = 0.6) {
+  const frac = Math.min(0.6, Math.max(0.05, seconds / item.dur));
+  const pts = basePoints(item, 0, 1 - frac);
+  pts.push({ p: 1, v: Math.max(MIN_SPEED, Math.min(MAX_SPEED, toV)) });
+  setSpeedCurve(item, { points: pts, smooth: true });
+}
+
+/** Makes an item's speed start at `fromV` and glide to its own speed over its first `seconds` (mutates). */
+export function rampStart(item, fromV, seconds = 0.6) {
+  const frac = Math.min(0.6, Math.max(0.05, seconds / item.dur));
+  const pts = [{ p: 0, v: Math.max(MIN_SPEED, Math.min(MAX_SPEED, fromV)) }, ...basePoints(item, frac, 1)];
+  setSpeedCurve(item, { points: pts, smooth: true });
+}

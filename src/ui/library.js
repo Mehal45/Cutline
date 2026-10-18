@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { useStore, getState } from "../store.js";
 import { EFFECTS, EFFECT_CATEGORIES, FILTERS, fxThumbnail } from "../fx.js";
 import { applyEffect, applyFilter, addAdjustmentLayer, importFiles, addText, toast } from "../actions.js";
-import { html, Field } from "./kit.js";
+import { html, Field, db } from "./kit.js";
 import { loadFont } from "./fonts.js";
 import { TTS_VOICES, speak, ttsStatus } from "../tts.js";
 import {
@@ -116,7 +116,7 @@ function KindPresets({ kind, title, empty, describe, onUse, useTitle }) {
 
 const audioSummary = (p) => {
   const a = p.look.audio || {};
-  return [`${Math.round((a.volume ?? 1) * 100)}%`, a.fadeIn && `fade in ${a.fadeIn}s`, a.fadeOut && `fade out ${a.fadeOut}s`,
+  return [db(a.volume ?? 1), a.fadeIn && `fade in ${a.fadeIn}s`, a.fadeOut && `fade out ${a.fadeOut}s`,
     a.denoise && "noise reduced", a.enhance && "voice enhanced", a.normalize && "levelled", a.voice && VOICE_EFFECTS[a.voice]].filter(Boolean).join(" · ");
 };
 

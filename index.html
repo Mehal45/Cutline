@@ -462,6 +462,20 @@
     .kit-create { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px; margin-bottom: 8px; }
     .kit-create .check { margin: 3px 0; }
     .kit-create .ell { min-width: 0; }
+    .ctxmenu { position: fixed; z-index: 60; min-width: 250px; background: #232326; border: 1px solid var(--line); border-radius: 8px;
+      padding: 4px; box-shadow: 0 10px 30px rgba(0,0,0,.55); display: grid; }
+    .ctxmenu button { background: transparent; border: 0; text-align: left; display: flex; gap: 8px; align-items: center; padding: 6px 8px; }
+    .ctxmenu button:hover:not(:disabled) { background: var(--panel2); }
+    .ctxmenu button.on { color: var(--accent); }
+    .ctxmenu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; width: 100%; }
+    .ctx-head { color: var(--muted); font-size: 11px; padding: 4px 8px 2px; }
+    .kwide-sel { flex: 1; min-width: 0; }
+    .sndbadge { margin-left: 4px; }
+    .krow.plain { grid-template-columns: minmax(70px, max-content) minmax(0, 1fr) 76px; }
+    .krow.plain .klabel { max-width: 130px; }
+    .proxybtn em { font-style: normal; font-size: 10px; margin-left: 2px; }
+    .mproxy { position: absolute; left: 4px; top: 4px; background: rgba(0,0,0,.6); color: #ffd84d; border-radius: 4px; padding: 0 4px; font-size: 11px; }
+    .mproxy.busy { color: var(--text); }
   </style>
 </head>
 <body>

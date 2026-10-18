@@ -9,7 +9,7 @@ import { hasCurve, sourceAt } from "../speed.js";
 import {
   pause, seek, splitAtPlayhead, deleteSelection, rippleDelete, duplicateSelection, addText, freezeFrame, splitItemAt,
   addMediaToTimeline, importFiles, clampZoom, zoomToFit, ZOOM_MIN, ZOOM_MAX, toast, trimToPlayhead, mirrorSelection,
-  detachAudio, zoomTimeline,
+  detachAudio, zoomTimeline, easeSpeedAtCut, neighbour, resetSpeedCurve, toggleMute, applyTransition, setTextSound,
 } from "../actions.js";
 import { keyTimes, shiftKeyframes } from "../keyframes.js";
 import { decodeMedia } from "../media-audio.js";
@@ -493,7 +493,7 @@ export function Timeline() {
     return html`<div key=${item.id} data-kind=${kind} data-id=${item.id}
         class=${`seg ${cls}` + (isSelected(kind, item.id) ? " selected" : "") + (item.mute ? " muted" : "")}
         style=${{ left: LABEL + item.start * zoom, width: Math.max(4, item.dur * zoom) }}
-        onPointerDown=${onBody}>
+        onPointerDown=${onBody} onContextMenu=${(e) => clipMenu(e, kind, item)}>
       ${extra}
       <div class="handle l" title="Drag to trim or extend the start" onPointerDown=${trimLeft} />
       <span class=${kind === "overlay" ? "label" : ""}>${label}</span>
@@ -578,6 +578,15 @@ export function Timeline() {
   const onDrop = async (e) => {
     setGhost(null);
     const id = e.dataTransfer.getData("text/x-cutline-media");
+    // A sound dropped onto a text becomes that text's sound.
+    const onText = e.target.closest?.('[data-kind="text"]');
+    const dropped = id && getState().project.media[id];
+    if (onText && dropped && dropped.kind !== "image") {
+      e.preventDefault();
+      setTextSound(id, [onText.dataset.id]);
+      select([{ kind: "text", id: onText.dataset.id }]);
+      return;
+    }
     const files = [...(e.dataTransfer.files || [])];
     if (!id && !files.length) return;
     e.preventDefault();
@@ -594,6 +603,41 @@ export function Timeline() {
       else addMediaToTimeline(m, "main", { index: row.type === "main" ? mainIndexAt(p, t + offset, null) : p.main.length, range: { in: 0, dur: m.duration } });
       offset += m.duration;
     }
+  };
+
+  /** Right-click on a clip: the usual actions plus easing the speed into the next / from the previous clip. */
+  const clipMenu = (e, kind, item) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const p = getState().project;
+    if (!isSelected(kind, item.id)) select([{ kind, id: item.id }]);
+    const next = kind === "text" || kind === "effect" ? null : neighbour(p, kind, item, 1);
+    const prev = kind === "text" || kind === "effect" ? null : neighbour(p, kind, item, -1);
+    const items = [
+      { label: "Split at playhead", icon: "scissors", onClick: splitAtPlayhead },
+      { label: "Duplicate", icon: "copy", onClick: duplicateSelection },
+      ...(kind !== "text" && kind !== "effect" ? [{ label: item.mute ? "Unmute" : "Mute", icon: item.mute ? "volume-2" : "volume-x", onClick: toggleMute }] : []),
+      ...(hasCurve(item) ? [{ label: "Remove speed curve", icon: "rotate-ccw", onClick: () => resetSpeedCurve(kind, item.id) }] : []),
+      { label: "Delete", icon: "trash-2", onClick: deleteSelection },
+    ];
+    if (next) items.push("-", { heading: "Speed into the next clip" },
+      { label: "Ease into the next clip's speed", icon: "arrow-right-from-line", onClick: () => easeSpeedAtCut(kind, item.id, next.id, "out") },
+      { label: "Ease across the cut (both clips)", icon: "activity", onClick: () => easeSpeedAtCut(kind, item.id, next.id, "both") });
+    if (prev) items.push("-", { heading: "Speed from the previous clip" },
+      { label: "Ease in from the previous clip's speed", icon: "arrow-left-from-line", onClick: () => easeSpeedAtCut(kind, prev.id, item.id, "in") });
+    if (kind === "text") {
+      const sounds = Object.values(p.media).filter((m) => !m.missing && m.kind === "audio").slice(0, 8);
+      items.push("-", { heading: "Sound with this text" },
+        ...(sounds.length ? sounds.map((m) => ({ label: m.name, icon: item.sound?.mediaId === m.id ? "check" : "music",
+          onClick: () => setTextSound(m.id, getState().selection.filter((s) => s.kind === "text").map((s) => s.id)) }))
+          : [{ label: "Import a sound into the library first", icon: "music", disabled: true, onClick: () => {} }]),
+        ...(item.sound ? [{ label: "Remove sound", icon: "volume-x", onClick: () => setTextSound(null, [item.id]) }] : []));
+    }
+    if (next || prev) {
+      const ramp = getState().speedRamp ?? 0.6;
+      items.push(...[0.3, 0.6, 1].map((s) => ({ label: `Ramp length ${s}s`, icon: ramp === s ? "check" : "dot", on: ramp === s, onClick: () => setState({ speedRamp: s }) })));
+    }
+    setState({ ctxMenu: { x: e.clientX, y: e.clientY, items } });
   };
 
   const maxTrack = (list) => Math.max(-1, ...(list || []).map((x) => x.track ?? 0));
@@ -656,7 +700,8 @@ export function Timeline() {
 
         <div class=${"track text-track" + (trackFlags(project, "text").locked ? " locked" : "") + (trackFlags(project, "text").hidden ? " hidden" : "")} data-lane="text">
           <${TrackHead} k="text" label="Text" icon="type" project=${project} mute=${false} />
-          ${project.texts.map((t) => laneItem("text", t, "text" + (t.caption ? " caption" : ""), t.text))}
+          ${project.texts.map((t) => laneItem("text", t, "text" + (t.caption ? " caption" : ""), t.text,
+            t.sound && project.media[t.sound.mediaId] ? html`<b class="badge sndbadge" title=${"Sound: " + project.media[t.sound.mediaId].name}>🔊</b>` : null))}
         </div>
 
         ${overlayTracks.map((tr) => html`<div class=${"track lane-overlay" + (trackFlags(project, `overlay:${tr}`).locked ? " locked" : "") + (trackFlags(project, `overlay:${tr}`).hidden ? " hidden" : "")} data-lane="overlay" data-track=${tr} key=${"o" + tr}>
@@ -674,7 +719,7 @@ export function Timeline() {
               <div data-kind="main" data-id=${s.id}
                   class=${"seg clip" + (isSelected("main", s.id) ? " selected" : "") + (s.mute ? " muted" : "")}
                   style=${{ left: LABEL + s.start * zoom, width: Math.max(4, s.dur * zoom) }}
-                  onPointerDown=${(e) => mainDrag(e, s, media)}>
+                  onPointerDown=${(e) => mainDrag(e, s, media)} onContextMenu=${(e) => clipMenu(e, "main", s)}>
                 <div class="handle l" onPointerDown=${(e) => {
                   const orig = structuredClone(s);
                   dragGesture(e, (ev, dx) => editLive((p) => {
@@ -697,7 +742,18 @@ export function Timeline() {
               ${i < segs.length - 1 && html`<div data-kind=${s.transition ? "transition" : undefined} data-id=${s.id}
                   class=${"diamond" + (s.transition ? " has" : "") + (isSelected("transition", s.id) ? " selected" : "")}
                   style=${{ left: LABEL + (s.start + s.dur) * zoom }}
-                  title=${s.transition ? TRANSITIONS[s.transition.type] : "Add transition"}
+                  title=${(s.transition ? TRANSITIONS[s.transition.type] : "Add transition") + " · right-click: smooth the speed at this cut"}
+                  onContextMenu=${(e) => {
+                    e.preventDefault(); e.stopPropagation();
+                    const next = project.main[i + 1];
+                    setState({ ctxMenu: { x: e.clientX, y: e.clientY, items: [
+                      ...speedEaseItems("main", project.main[i], next),
+                      "-",
+                      s.transition
+                        ? { label: "Remove transition", icon: "x", onClick: () => edit((p) => (p.main.find((y) => y.id === s.id).transition = null)) }
+                        : { label: "Add cross-fade transition", icon: "blend", onClick: () => { select([{ kind: "transition", id: s.id }]); applyTransition("crossfade"); } },
+                    ] } });
+                  }}
                   onPointerDown=${(e) => {
                     e.stopPropagation();
                     if (!s.transition) edit((p) => (p.main.find((y) => y.id === s.id).transition = { type: "crossfade", dur: 0.6 }));
@@ -721,10 +777,44 @@ export function Timeline() {
         ${ghost?.width != null && html`<div class=${"drag-ghost " + ghost.lane} style=${{ left: ghost.left, top: ghost.top, width: ghost.width, height: ghost.height }}>${ghost.label}</div>`}
         ${snapAt != null && html`<div class="snapline" style=${{ left: LABEL + snapAt * zoom }} />`}
         <${TrimTip} />
+        <${ContextMenu} />
         <div class="playhead" style=${{ left: LABEL + time * zoom }} />
       </div>
     </div>
   </section>`;
+}
+
+/** Right-click menu: state.ctxMenu = { x, y, items: [{ label, icon, onClick, disabled } | "-" | { heading }] }. */
+function ContextMenu() {
+  const menu = useStore((s) => s.ctxMenu);
+  useEffect(() => {
+    if (!menu) return;
+    const close = (e) => { if (!e.target.closest?.(".ctxmenu")) setState({ ctxMenu: null }); };
+    const esc = (e) => e.key === "Escape" && setState({ ctxMenu: null });
+    window.addEventListener("pointerdown", close, true);
+    window.addEventListener("keydown", esc);
+    return () => { window.removeEventListener("pointerdown", close, true); window.removeEventListener("keydown", esc); };
+  }, [menu]);
+  if (!menu) return null;
+  const x = Math.min(menu.x, window.innerWidth - 270), y = Math.min(menu.y, window.innerHeight - 30 - menu.items.length * 28);
+  return html`<div class="ctxmenu" style=${{ left: x, top: Math.max(4, y) }} onContextMenu=${(e) => e.preventDefault()}>
+    ${menu.items.map((it, i) => it === "-" ? html`<hr key=${i} />`
+      : it.heading ? html`<div key=${i} class="ctx-head">${it.heading}</div>`
+      : html`<button key=${i} disabled=${it.disabled} class=${it.on ? "on" : ""} onClick=${() => { setState({ ctxMenu: null }); it.onClick(); }}>
+          ${it.icon && html`<${Icon} n=${it.icon} />`} <span>${it.label}</span></button>`)}
+  </div>`;
+}
+
+/** Menu items for easing speed across the cut between two touching clips. */
+function speedEaseItems(kind, a, b) {
+  const ramp = getState().speedRamp ?? 0.6;
+  return [
+    { heading: "Smooth the speed change at this cut" },
+    { label: "Ease speed across the cut", icon: "activity", onClick: () => easeSpeedAtCut(kind, a.id, b.id, "both") },
+    { label: "Ease the left clip into the right clip's speed", icon: "arrow-right-from-line", onClick: () => easeSpeedAtCut(kind, a.id, b.id, "out") },
+    { label: "Ease the right clip in from the left clip's speed", icon: "arrow-left-from-line", onClick: () => easeSpeedAtCut(kind, a.id, b.id, "in") },
+    ...[0.3, 0.6, 1].map((s) => ({ label: `Ramp length ${s}s`, icon: ramp === s ? "check" : "dot", on: ramp === s, onClick: () => setState({ speedRamp: s }) })),
+  ];
 }
 
 /** Floating readout while trimming a clip. */

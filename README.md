@@ -13,6 +13,10 @@ A free, open-source CapCut-style video editor for Windows and Mac. No account, n
 - **Titles:** 32 built-in fonts plus every font installed on your computer, outline, shadow, background plate, letter spacing and 18 presets
 - **Speed curves:** smooth speed ramps (e.g. normal → fast → normal) with presets and an editable curve, plus one-click smooth (ease in & out) motion for keyframes
 - **Preview quality** Full / ½ / ¼ for smooth playback on slower computers (export is always full quality)
+- **Smooth preview** (⚡ in the viewer bar): light 720p copies of your videos are made in the background, so scrubbing, fast-forward and animations play smoothly even with OBS recordings. Building pauses while you play or export, and copies are reused next time (desktop app). Export always uses the originals
+- **Sound on text:** give a title a sound effect (drag it from the library onto the text, right-click › Sound with this text, or the text's Sound section). It plays as the in-animation finishes, when the text appears, or after a delay you choose, follows the text when you move it, and can be applied to every text or caption at once
+- **Smooth speed at cuts:** right-click a cut ◆ or a clip to ease the speed into the next clip, in from the previous one, or across the cut (0.3, 0.6 or 1 s ramp)
+- **Exact numbers:** every slider has a number box you can type into; volume is shown in decibels (0 dB = unchanged, −6 dB = half)
 - **Cut fast:** split, trim, ripple delete, merge, freeze frame, detach audio, speed 0.1–10×, magnetic snapping
 - **Blend modes, crop and flips** on any clip or layer
 - **Export** H.264, HEVC, AV1 or VP9 MP4 up to 4K 60 fps at any bitrate (e.g. 40,000 kbps), plus WAV audio and PNG stills
@@ -139,6 +143,7 @@ Press **?** in the app for the full list. On a Mac, use ⌘ where it says Ctrl.
 ## Known limits
 
 - **Internet on first use:** the editor libraries, fonts and AI models (captions, voices, background removal) load online. After the first use the models are cached.
+- **Smooth preview copies take disk space** (about 1 GB per hour of video, in the app's data folder). Turn ⚡ off to stop making them.
 - **Fast export needs MP4/MOV clips** (H.264, HEVC, VP9 or AV1, if the computer can decode the codec). Other formats, such as WebM, export through a much slower seek-per-frame path.
 - **Sped-up audio changes pitch in the exported file.** The live preview keeps the original pitch.
 - **Volume above 100%, voice cleanup and voice effects** are heard in the preview once you've pressed play once (browsers only start audio processing after a click).

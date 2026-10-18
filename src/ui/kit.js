@@ -33,9 +33,20 @@ export function itemStart(project, kind, item) {
 /** A Lucide icon from the bundled icon font, e.g. <${Icon} n="scissors" />. */
 export const Icon = ({ n, size }) => html`<i class=${"ico icon-" + n} style=${size ? { fontSize: size + "px" } : undefined} aria-hidden="true" />`;
 
-/** How a value is shown in the number box, worked out from the label formatter ("50%", "12°" or a plain number). */
-function numberMode(format) {
+/** Volume gain shown in decibels: 1 = 0 dB, 0.5 = -6 dB, 2 = +6 dB, silence = -∞. */
+export const db = (v) => (v < 0.001 ? "-∞ dB" : `${(20 * Math.log10(v)).toFixed(1)} dB`);
+/** Seconds, e.g. "0.40s". */
+export const secs = (v) => `${v.toFixed(2)}s`;
+
+/** How a value is shown in the number box, worked out from the label formatter ("50%", "12°", "-6 dB", "0.4s", "2×"). */
+export function numberMode(format) {
   const sample = String(format(0.5));
+  if (sample.endsWith("dB")) return {
+    show: (v) => (v < 0.001 ? -60 : Math.round(20 * Math.log10(v) * 10) / 10),
+    read: (n) => (n <= -60 ? 0 : Math.pow(10, n / 20)), unit: "dB", step: 0.5,
+  };
+  if (sample.endsWith("s")) return { show: (v) => Math.round(v * 100) / 100, read: (n) => n, unit: "s", step: 0.05 };
+  if (sample.endsWith("×")) return { show: (v) => Math.round(v * 100) / 100, read: (n) => n, unit: "×", step: 0.05 };
   if (sample.endsWith("%")) return { show: (v) => Math.round(v * 100), read: (n) => n / 100, unit: "%", step: 1 };
   if (sample.endsWith("°")) return { show: (v) => Math.round(v * 10) / 10, read: (n) => n, unit: "°", step: 1 };
   return { show: (v) => Math.round(v * 100) / 100, read: (n) => n, unit: "", step: 0.01 };
@@ -58,15 +69,13 @@ export function KSlider({ kind, id, path, label, min, max, step = 0.01, fallback
   const ks = keysOf(item, path);
   const prev = [...ks].reverse().find((k) => k.t < lt - 1e-3);
   const next = ks.find((k) => k.t > lt + 1e-3);
-  const mode = numberMode(format);
   return html`<div class="krow">
     <span class="klabel" title=${label}>${label}</span>
     <input class="kslider" type="range" min=${min} max=${max} step=${step} value=${v}
       onPointerDown=${() => checkpoint()} onKeyDown=${() => checkpoint()}
       onChange=${(e) => setAnimatable(kind, id, path, +e.target.value, true)} />
-    <span class="knum"><input type="number" step=${mode.step} value=${mode.show(v)}
-      onFocus=${(e) => e.target.select()}
-      onChange=${(e) => { if (e.target.value === "" || isNaN(+e.target.value)) return; checkpoint(); setAnimatable(kind, id, path, Math.max(min, Math.min(max, mode.read(+e.target.value))), true); }} />${mode.unit && html`<em>${mode.unit}</em>`}</span>
+    <${NumBox} value=${v} min=${min} max=${max} format=${format}
+      onCommit=${(x) => { checkpoint(); setAnimatable(kind, id, path, x, true); }} />
     <span class="kkf">
       <button class="kn" title="Previous keyframe" disabled=${!prev} onClick=${() => prev && seek(start + prev.t)}>‹</button>
       <button class=${"kf" + (here ? " on" : animated ? " has" : "")} title=${here ? "Remove keyframe" : "Add keyframe at the playhead"}
@@ -77,12 +86,25 @@ export function KSlider({ kind, id, path, label, min, max, step = 0.01, fallback
   </div>`;
 }
 
-/** A plain slider for a non-animated numeric setting. One undo step per drag. */
+/**
+ * Number box for a slider value, in the slider's units (%, dB, s, ×, °). Type a value and press Enter or
+ * click away; arrow keys step it. Values outside min..max are clamped.
+ */
+export function NumBox({ value, min, max, format, onCommit }) {
+  const mode = numberMode(format);
+  return html`<span class="knum"><input type="number" step=${mode.step} value=${mode.show(value)}
+    onFocus=${(e) => e.target.select()}
+    onChange=${(e) => { if (e.target.value === "" || isNaN(+e.target.value)) return; onCommit(Math.max(min, Math.min(max, mode.read(+e.target.value)))); }} />${mode.unit && html`<em>${mode.unit}</em>`}</span>`;
+}
+
+/** A plain slider for a non-animated numeric setting, with an editable number. One undo step per drag. */
 export function Slider({ label, value, min, max, step = 0.01, onChange, format = (v) => v.toFixed(2) }) {
-  return html`<${Field} label=${html`${label} <b>${format(value)}</b>`}>
-    <input type="range" min=${min} max=${max} step=${step} value=${value}
+  return html`<div class="krow plain">
+    <span class="klabel" title=${label}>${label}</span>
+    <input class="kslider" type="range" min=${min} max=${max} step=${step} value=${value}
       onPointerDown=${() => checkpoint()} onKeyDown=${() => checkpoint()} onChange=${(e) => onChange(+e.target.value, true)} />
-  <//>`;
+    <${NumBox} value=${value} min=${min} max=${max} format=${format} onCommit=${(v) => { checkpoint(); onChange(v, true); }} />
+  </div>`;
 }
 
 /**

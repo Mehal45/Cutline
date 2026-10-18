@@ -11,7 +11,7 @@ const KEY = "cutline.textPresets";
 const desktop = typeof window !== "undefined" ? window.cutlineDesktop : null;
 
 /** The parts of a text item a preset keeps. */
-const LOOK = ["dur", "style", "x", "y", "scale", "rotation", "opacity", "anim", "keyframes"];
+const LOOK = ["dur", "style", "x", "y", "scale", "rotation", "opacity", "anim", "keyframes", "sound"];
 
 async function read() {
   try {
@@ -139,7 +139,26 @@ export function addTextFromPreset(preset, text) {
     style: { ...look.style },
   }));
   setState({ selection: [{ kind: "text", id }] });
+  if (look.sound) linkSound(id, look.sound);
   return id;
+}
+
+/** A preset's sound may come from another project: find it in the library by file, or bring the file in. */
+async function linkSound(textId, sound) {
+  const media = getState().project.media;
+  if (media[sound.mediaId]) return;
+  let m = Object.values(media).find((x) => sound.path && x.path === sound.path);
+  if (!m && sound.path) {
+    const { added } = await importPaths([sound.path]);
+    m = getState().project.media[added[0]];
+  }
+  edit((p) => {
+    const t = p.texts.find((x) => x.id === textId);
+    if (!t) return;
+    if (m) t.sound = { ...t.sound, mediaId: m.id };
+    else delete t.sound;
+  });
+  if (!m) toast(`The preset's sound “${sound.name || "file"}” wasn't found on this computer`);
 }
 
 /** "Add text": uses the preset marked as default, if any, otherwise the plain default text. */
@@ -156,7 +175,7 @@ export function applyPresetToSelection(preset) {
   const look = preset.look;
   edit((p) => p.texts.forEach((t) => {
     if (!ids.has(t.id)) return;
-    for (const k of ["style", "x", "y", "scale", "rotation", "opacity", "anim", "keyframes"]) {
+    for (const k of ["style", "x", "y", "scale", "rotation", "opacity", "anim", "keyframes", "sound"]) {
       if (look[k] !== undefined) t[k] = structuredClone(look[k]);
       else if (k === "keyframes") delete t.keyframes;
     }

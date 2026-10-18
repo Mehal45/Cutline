@@ -2,7 +2,7 @@
 import { Muxer, ArrayBufferTarget } from "mp4-muxer";
 import { layoutMain, projectDuration } from "./store.js";
 import {
-  drawFrame, renderLock, clipSpeed, activeClips, activeOverlays, exportFrames, seekClipElement, volumeAt,
+  drawFrame, renderLock, clipSpeed, activeClips, activeOverlays, exportFrames, seekClipElement, volumeAt, textSounds,
 } from "./engine.js";
 import { demux, SegmentDecoder } from "./decode.js";
 import { buildChain, needsChain, prepareContext, loudnessGain } from "./audiofx.js";
@@ -18,6 +18,7 @@ function audioSources(project) {
   for (const seg of layoutMain(project)) out.push({ item: seg, start: seg.start, main: true, track: "main" });
   for (const o of project.overlays || []) out.push({ item: o, start: o.start, track: `overlay:${o.track ?? 0}` });
   for (const a of project.audio || []) out.push({ item: a, start: a.start, track: `audio:${a.track ?? 0}` });
+  for (const a of textSounds(project)) out.push({ item: a, start: a.start, track: "text" });
   // Muted items and muted tracks are left out; a hidden picture track keeps its sound (like most editors).
   return out.filter((s) => !s.item.mute && !ts[s.track]?.muted);
 }

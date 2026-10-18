@@ -17,4 +17,9 @@ contextBridge.exposeInMainWorld("cutlineDesktop", {
   loadPrefs: () => ipcRenderer.invoke("cutline:prefs-load"),
   savePrefs: (prefs) => ipcRenderer.invoke("cutline:prefs-save", prefs),
   setTitle: (name) => ipcRenderer.send("cutline:title", name),
+  proxyOpen: (src) => ipcRenderer.invoke("cutline:proxy-open", src),
+  proxyWrite: (part, position, data) => ipcRenderer.invoke("cutline:proxy-write", part, position, data),
+  proxyDone: (part, final, audio) => ipcRenderer.invoke("cutline:proxy-done", part, final, audio),
+  proxyAbort: (part) => ipcRenderer.invoke("cutline:proxy-abort", part),
+  proxyClear: () => ipcRenderer.invoke("cutline:proxy-clear"),
 });

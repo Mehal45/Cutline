@@ -15,7 +15,8 @@ import { SourceViewer, toggleSource, stepSource, markSource, addFromSource } fro
 import { hasKeys, setKey, setStatic } from "./keyframes.js";
 import { exportMp4, exportWav, exportFrame, supportedCodecs, VIDEO_CODECS, QUALITY, bitrateFor } from "./export.js";
 import { transcribe, wordsToCaptions, CAPTION_MODELS } from "./captions.js";
-import { html, fmt, Field, Icon } from "./ui/kit.js";
+import { html, fmt, Field, Icon, Slider, secs } from "./ui/kit.js";
+import { startProxies, setProxyMode } from "./proxy.js";
 import { Inspector } from "./ui/inspector.js";
 import { Timeline, dragGesture } from "./ui/timeline.js";
 import { EffectsTab, FiltersTab, AudioTab, TextTab, AdjustmentTab, AudioPresetsTab, MediaKitsTab } from "./ui/library.js";
@@ -28,6 +29,23 @@ import {
 
 const additiveKey = (e) => e.shiftKey || e.ctrlKey || e.metaKey;
 setState({ snap: true, timelineH: Math.max(260, Math.min(460, Math.round(window.innerHeight * 0.38))), previewQuality: (() => { try { return +localStorage.getItem("cutline.previewQuality") || 1; } catch { return 1; } })() });
+
+startProxies();
+
+/** Smooth-preview toggle with the background progress. */
+function ProxyButton() {
+  const mode = useStore((s) => s.proxyMode);
+  const proxies = useStore((s) => s.proxies) || {};
+  const media = useStore((s) => s.project.media);
+  const building = Object.entries(proxies).find(([id, p]) => p.state === "building" && media[id]);
+  const on = mode !== "off";
+  const tip = on
+    ? (building ? `Preparing smooth preview of ${media[building[0]].name}: ${Math.round((building[1].progress || 0) * 100)}% (pauses while you play)` : "Smooth preview is on: videos play and scrub from light copies made in the background. Export always uses the originals. Click to turn off.")
+    : "Smooth preview is off. Click to make light preview copies of your videos in the background (smoother scrubbing and fast-forward).";
+  return html`<button class=${"ibtn proxybtn" + (on ? " on" : "")} title=${tip} onClick=${() => setProxyMode(on ? "off" : "on")}>
+    <${Icon} n="zap" />${on && building && html`<em>${Math.round((building[1].progress || 0) * 100)}%</em>`}
+  </button>`;
+}
 
 // ---------------- render loop ----------------
 
@@ -189,6 +207,7 @@ function LeftPanel() {
 function MediaTab() {
   const media = useStore((s) => s.project.media);
   const previewing = useStore((s) => s.preview?.mediaId);
+  const proxies = useStore((s) => s.proxies);
   const input = useRef();
   const [drag, setDrag] = useState(false);
   const items = Object.values(media);
@@ -212,6 +231,8 @@ function MediaTab() {
             : m.kind === "audio" ? html`<div class="audio-thumb"><${Icon} n="audio-lines" size=${26} /></div>`
             : html`<video src=${m.url ? m.url + "#t=0.5" : ""} muted preload="metadata" />`}
           <span class="mdur">${m.missing ? "missing" : m.kind === "image" ? "" : fmt(m.duration).replace(/\.\d+$/, "")}</span>
+          ${proxies?.[m.id]?.state === "ready" && html`<span class="mproxy" title="Smooth preview ready">⚡</span>`}
+          ${proxies?.[m.id]?.state === "building" && html`<span class="mproxy busy" title="Preparing smooth preview…">${Math.round((proxies[m.id].progress || 0) * 100)}%</span>`}
           ${m.noPicture && html`<span class="mwarn" title="This video's format can't be shown. Convert it to MP4 (H.264).">⚠</span>`}
           ${!m.missing && html`<button class="madd" title=${m.kind === "audio" ? "Add to an audio track at the playhead" : "Add to the end of the main track"}
             onClick=${(e) => { e.stopPropagation(); addMediaToTimeline(m); }}><${Icon} n="plus" /></button>`}
@@ -233,9 +254,7 @@ function TransitionsTab() {
         <span class=${"tr-icon tr-" + k}></span>${label}
       </button>`)}
     </div>
-    <label class="field"><span>Default duration ${dur.toFixed(2)}s</span>
-      <input type="range" min="0.2" max="2" step="0.05" value=${dur} onChange=${(e) => setDur(+e.target.value)} />
-    </label>
+    <${Slider} label="Duration" value=${dur} min=${0.1} max=${3} step=${0.05} format=${secs} onChange=${(v) => setDur(v)} />
     <button class="wide" onClick=${() => applyTransition("crossfade", dur, true)}>Cross fade every cut</button>
   </div>`;
 }
@@ -308,6 +327,7 @@ function Player() {
           <option value="0.5">½</option>
           <option value="0.25">¼</option>
         </select>
+        <${ProxyButton} />
         <button class=${"ibtn" + (useStore((s) => s.axis) ? " on" : "")} onClick=${() => setState({ axis: !getState().axis })} title="Guides and safe area (G)"><${Icon} n="scan" /></button>
         <select class="pq" title="Canvas ratio" value=${`${width}x${height}`} onChange=${(e) => { const [w, h] = e.target.value.split("x").map(Number); ratio(w, h); }}>
           ${[["16:9", 1920, 1080], ["9:16", 1080, 1920], ["1:1", 1080, 1080], ["4:5", 1080, 1350], ["4:3", 1440, 1080], ["21:9", 2560, 1080]].map(([l, w, h]) => html`<option value=${`${w}x${h}`}>${l}</option>`)}
