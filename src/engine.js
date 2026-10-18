@@ -397,7 +397,9 @@ export function drawFrame(ctx, project, t) {
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, W, H);
   const { clips, transition } = activeClips(project, t);
-  if (transition) {
+  const hidden = (key) => !!project.trackState?.[key]?.hidden;
+  if (hidden("main")) { /* main track hidden: nothing drawn from it */ }
+  else if (transition) {
     const A = scratch(0, W, H), B = scratch(1, W, H);
     A.clearRect(0, 0, W, H); B.clearRect(0, 0, W, H);
     A.fillStyle = B.fillStyle = "#000";
@@ -408,9 +410,10 @@ export function drawFrame(ctx, project, t) {
   } else if (clips[0]) {
     drawClip(ctx, project, clips[0], W, H);
   }
-  for (const o of activeOverlays(project, t)) drawVisual(ctx, project, o.item, o.local, W, H);
+  for (const o of activeOverlays(project, t)) if (!hidden(`overlay:${o.item.track ?? 0}`)) drawVisual(ctx, project, o.item, o.local, W, H);
   // Timeline effects apply to everything under them (not to the texts above).
   for (const e of activeTimed(project.effects, t)) {
+    if (hidden(`effect:${e.item.track ?? 0}`)) continue;
     const fx = fxSettingsAt(e.item, e.local);
     if (!fx) continue;
     const out = applyFx(ctx.canvas, fx, e.local, W, H);
@@ -419,7 +422,7 @@ export function drawFrame(ctx, project, t) {
     ctx.drawImage(out, 0, 0, W, H);
     ctx.restore();
   }
-  for (const item of project.texts) drawText(ctx, item, t, W, H);
+  if (!hidden("text")) for (const item of project.texts) drawText(ctx, item, t, W, H);
 }
 
 /** Items of a lane (overlays, audio, effects) visible at t, with local and source time. */
@@ -642,7 +645,7 @@ export function syncMedia(project, t, playing) {
     }
     // Inside a transition one side is "frozen" on its first/last frame.
     const frozen = t < c.seg.start || t >= c.seg.start + c.seg.dur;
-    const muted = !playing || frozen || clips.length > 1 && c !== clips[0] || !!c.seg.mute;
+    const muted = !playing || frozen || clips.length > 1 && c !== clips[0] || !!c.seg.mute || !!project.trackState?.main?.muted;
     position(c.seg, c.local, el, c.sourceTime, frozen, muted);
   }
   for (const list of [project.overlays, project.audio]) {
@@ -655,7 +658,8 @@ export function syncMedia(project, t, playing) {
         if (!el.complete) waits.push(new Promise((r) => (el.onload = r)));
         continue;
       }
-      position(o.item, o.local, el, o.sourceTime, false, !playing || !!o.item.mute);
+      const lane = list === project.audio ? "audio" : "overlay";
+      position(o.item, o.local, el, o.sourceTime, false, !playing || !!o.item.mute || !!project.trackState?.[`${lane}:${o.item.track ?? 0}`]?.muted);
     }
   }
   for (const [id, el] of elements) {

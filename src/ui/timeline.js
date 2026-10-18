@@ -2,20 +2,21 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   useStore, getState, setState, edit, editLive, checkpoint, undo, redo, layoutMain, projectDuration, isSelected, select,
-  compactTracks,
+  compactTracks, trackFlags, toggleTrackFlag,
 } from "../store.js";
 import { clipSpeed, TRANSITIONS } from "../engine.js";
 import { hasCurve, sourceAt } from "../speed.js";
 import {
   pause, seek, splitAtPlayhead, deleteSelection, rippleDelete, duplicateSelection, addText, freezeFrame, splitItemAt,
-  addMediaToTimeline, importFiles, clampZoom, zoomToFit, ZOOM_MIN, ZOOM_MAX, toast,
+  addMediaToTimeline, importFiles, clampZoom, zoomToFit, ZOOM_MIN, ZOOM_MAX, toast, trimToPlayhead, mirrorSelection,
+  detachAudio, zoomTimeline,
 } from "../actions.js";
 import { keyTimes, shiftKeyframes } from "../keyframes.js";
 import { decodeMedia } from "../media-audio.js";
-import { html, fmt } from "./kit.js";
+import { html, fmt, Icon } from "./kit.js";
 
 const additiveKey = (e) => e.shiftKey || e.ctrlKey || e.metaKey;
-const LABEL = 70;
+const LABEL = 150;
 const LANE_H = { effect: 34, text: 52, overlay: 52, main: 72, audio: 48 };
 const LANE_KEY = { effect: "effects", overlay: "overlays", audio: "audio" };
 
@@ -207,6 +208,26 @@ function Wave({ media, item, width, height }) {
   return html`<canvas ref=${ref} class="wave" />`;
 }
 
+// ---------------- track headers ----------------
+
+/** Track key of a timeline row element ("main", "text", "overlay:1" …). */
+const rowKey = (row) => (!row ? null : row.dataset.lane === "main" || row.dataset.lane === "text" ? row.dataset.lane : `${row.dataset.lane}:${row.dataset.track}`);
+
+/** Name, icon and lock / hide / mute buttons on the left of a track. */
+function TrackHead({ k, label, icon, project, hide = true, mute = true }) {
+  const f = trackFlags(project, k);
+  const b = (flag, on, off, title) => html`<button class=${f[flag] ? "on" : ""} title=${title}
+    onClick=${(e) => { e.stopPropagation(); toggleTrackFlag(k, flag); }}><${Icon} n=${f[flag] ? on : off} /></button>`;
+  return html`<div class="track-label" onPointerDown=${(e) => e.stopPropagation()}>
+    <span class="th-name"><${Icon} n=${icon} /> ${label}</span>
+    <span class="th-btns">
+      ${b("locked", "lock", "lock-open", f.locked ? "Unlock track" : "Lock track (no editing)")}
+      ${hide && b("hidden", "eye-off", "eye", f.hidden ? "Show track" : "Hide track")}
+      ${mute && b("muted", "volume-x", "volume-2", f.muted ? "Unmute track" : "Mute track")}
+    </span>
+  </div>`;
+}
+
 // ---------------- the timeline ----------------
 
 export function Timeline() {
@@ -279,6 +300,14 @@ export function Timeline() {
   /** Hand tool (H) or middle mouse button: drag to pan. Razor tool (B): click a clip to cut it there. */
   const onToolPointerDown = (e) => {
     if (e.target.closest(".ruler")) return;
+    // Locked tracks: nothing on them can be selected, moved, trimmed or cut.
+    const row = e.target.closest(".track");
+    if (row?.classList.contains("locked") && e.button === 0 && e.target.closest("[data-kind], .handle")) {
+      e.preventDefault();
+      e.stopPropagation();
+      toast("This track is locked — click the 🔒 on the left to unlock it");
+      return;
+    }
     if (e.button === 1 || (tool === "hand" && e.button === 0)) {
       e.preventDefault();
       e.stopPropagation();
@@ -322,7 +351,7 @@ export function Timeline() {
       const x1 = ev.clientX - r.left, y1 = ev.clientY - r.top;
       const box = { left: Math.min(x0, x1), top: Math.min(y0, y1), width: Math.abs(x1 - x0), height: Math.abs(y1 - y0) };
       setMarquee(box);
-      const hits = [...inner.current.querySelectorAll("[data-kind]")].filter((el) => {
+      const hits = [...inner.current.querySelectorAll("[data-kind]")].filter((el) => !el.closest(".track.locked")).filter((el) => {
         const b = el.getBoundingClientRect();
         const bl = b.left - r.left, bt = b.top - r.top;
         return bl < box.left + box.width && bl + b.width > box.left && bt < box.top + box.height && bt + b.height > box.top;
@@ -572,24 +601,35 @@ export function Timeline() {
   return html`<section class="timeline">
     <${ResizeBar} />
     <div class="tl-toolbar">
-      <button onClick=${undo} disabled=${!canUndo} title="Undo (Ctrl+Z)">↶</button>
-      <button onClick=${redo} disabled=${!canRedo} title="Redo (Ctrl+Y)">↷</button>
+      <span class="tgroup">
+        <button class=${"ibtn" + (!tool ? " on" : "")} onClick=${() => setState({ tool: null })} title="Select (V)"><${Icon} n="mouse-pointer-2" /></button>
+        <button class=${"ibtn" + (tool === "razor" ? " on" : "")} onClick=${() => setState({ tool: tool === "razor" ? null : "razor" })} title="Razor: click a clip to cut it (B)"><${Icon} n="scissors-line-dashed" /></button>
+        <button class=${"ibtn" + (tool === "hand" ? " on" : "")} onClick=${() => setState({ tool: tool === "hand" ? null : "hand" })} title="Hand: drag to pan (H, or middle mouse button)"><${Icon} n="hand" /></button>
+      </span>
       <span class="sep"></span>
-      <button onClick=${splitAtPlayhead} title="Split (S or Ctrl+B)">✂ Split</button>
-      <button onClick=${deleteSelection} title="Delete (Del)">🗑 Delete</button>
-      <button onClick=${rippleDelete} title="Delete and close the gap (Shift+Del)">⇤ Ripple</button>
-      <button onClick=${duplicateSelection} title="Duplicate (Ctrl+D)">⧉ Duplicate</button>
-      <button onClick=${() => freezeFrame()} title="Freeze the frame under the playhead (F)">❄ Freeze</button>
-      <button onClick=${() => addText()}>T Add text</button>
+      <button class="ibtn" onClick=${undo} disabled=${!canUndo} title="Undo (Ctrl+Z)"><${Icon} n="undo-2" /></button>
+      <button class="ibtn" onClick=${redo} disabled=${!canRedo} title="Redo (Ctrl+Y)"><${Icon} n="redo-2" /></button>
+      <span class="sep"></span>
+      <button class="ibtn" onClick=${splitAtPlayhead} title="Split (S · Ctrl+B splits everything)"><${Icon} n="scissors" /></button>
+      <button class="ibtn" onClick=${() => trimToPlayhead("left")} title="Delete left of the playhead (Q)"><${Icon} n="arrow-left-to-line" /></button>
+      <button class="ibtn" onClick=${() => trimToPlayhead("right")} title="Delete right of the playhead (W)"><${Icon} n="arrow-right-to-line" /></button>
+      <button class="ibtn" onClick=${deleteSelection} title="Delete (Del)"><${Icon} n="trash-2" /></button>
+      <button class="ibtn" onClick=${rippleDelete} title="Ripple delete: delete and close the gap (Shift+Del)"><${Icon} n="between-horizontal-start" /></button>
+      <span class="sep"></span>
+      <button class="ibtn" onClick=${() => freezeFrame()} title="Freeze frame (F)"><${Icon} n="snowflake" /></button>
+      <button class="ibtn" onClick=${mirrorSelection} title="Mirror"><${Icon} n="flip-horizontal-2" /></button>
+      <button class="ibtn" onClick=${duplicateSelection} title="Duplicate (Ctrl+D)"><${Icon} n="copy" /></button>
+      <button class="ibtn" onClick=${detachAudio} title="Detach audio to its own track"><${Icon} n="audio-lines" /></button>
+      <button class="ibtn" onClick=${() => addText()} title="Add text"><${Icon} n="type" /></button>
       <span class="spacer"></span>
-      <button class=${tool === "razor" ? "chip on" : "chip"} onClick=${() => setState({ tool: tool === "razor" ? null : "razor" })} title="Razor: click a clip to cut it (B)">🔪 Razor</button>
-      <button class=${tool === "hand" ? "chip on" : "chip"} onClick=${() => setState({ tool: tool === "hand" ? null : "hand" })} title="Hand: drag to pan the timeline (H, or middle mouse button)">✋ Pan</button>
-      <button class=${snap ? "chip on" : "chip"} onClick=${() => setState({ snap: !snap })} title="Magnetic snapping (N)">🧲 Snap</button>
-      <button onClick=${zoomToFit} title="Fit the whole project in view (Shift+Z)">⤢ Fit</button>
-      <span class="muted" title="Ctrl + mouse wheel also zooms">Zoom</span>
-      <input type="range" min="0" max="1000" title="Ctrl + mouse wheel also zooms"
+      <button class=${"ibtn" + (snap ? " on" : "")} onClick=${() => setState({ snap: !snap })} title="Magnetic snapping (N)"><${Icon} n="magnet" /></button>
+      <span class="sep"></span>
+      <button class="ibtn" onClick=${() => zoomTimeline(1 / 1.25)} title="Zoom out (−, Ctrl + wheel)"><${Icon} n="zoom-out" /></button>
+      <input class="zoom" type="range" min="0" max="1000" title="Zoom (Ctrl + mouse wheel)"
         value=${Math.round((1000 * Math.log(zoom / ZOOM_MIN)) / Math.log(ZOOM_MAX / ZOOM_MIN))}
         onChange=${(e) => setState({ zoom: clampZoom(ZOOM_MIN * Math.pow(ZOOM_MAX / ZOOM_MIN, +e.target.value / 1000)) })} />
+      <button class="ibtn" onClick=${() => zoomTimeline(1.25)} title="Zoom in (+, Ctrl + wheel)"><${Icon} n="zoom-in" /></button>
+      <button class="ibtn" onClick=${zoomToFit} title="Fit the whole project (Shift+Z)"><${Icon} n="maximize-2" /></button>
     </div>
     <div class=${"tl-scroll" + (tool ? " tool-" + tool : "")} ref=${scroller} onScroll=${pinLabels}>
       <div class="tl-inner" ref=${inner} style=${{ width: LABEL + total * zoom }} onPointerDownCapture=${onToolPointerDown} onPointerDown=${onTracksPointerDown}
@@ -599,23 +639,23 @@ export function Timeline() {
           ${ticks.map((s) => html`<div class="tick" key=${s} style=${{ left: LABEL + s * zoom }}>${tickLabel(s)}</div>`)}
         </div>
 
-        ${effectTracks.map((tr) => html`<div class="track lane-effect" data-lane="effect" data-track=${tr} key=${"e" + tr}>
-          <div class="track-label">Effect ${effectTracks.length > 1 ? tr + 1 : ""}</div>
+        ${effectTracks.map((tr) => html`<div class=${"track lane-effect" + (trackFlags(project, `effect:${tr}`).locked ? " locked" : "") + (trackFlags(project, `effect:${tr}`).hidden ? " hidden" : "")} data-lane="effect" data-track=${tr} key=${"e" + tr}>
+          <${TrackHead} k=${`effect:${tr}`} label=${`Effect${effectTracks.length > 1 ? " " + (tr + 1) : ""}`} icon="sparkles" project=${project} mute=${false} />
           ${project.effects.filter((x) => (x.track ?? 0) === tr).map((x) => laneItem("effect", x, "effect", x.name || "Effect"))}
         </div>`)}
 
-        <div class="track text-track" data-lane="text">
-          <div class="track-label">Text</div>
+        <div class=${"track text-track" + (trackFlags(project, "text").locked ? " locked" : "") + (trackFlags(project, "text").hidden ? " hidden" : "")} data-lane="text">
+          <${TrackHead} k="text" label="Text" icon="type" project=${project} mute=${false} />
           ${project.texts.map((t) => laneItem("text", t, "text" + (t.caption ? " caption" : ""), t.text))}
         </div>
 
-        ${overlayTracks.map((tr) => html`<div class="track lane-overlay" data-lane="overlay" data-track=${tr} key=${"o" + tr}>
-          <div class="track-label">Layer ${tr + 1}</div>
+        ${overlayTracks.map((tr) => html`<div class=${"track lane-overlay" + (trackFlags(project, `overlay:${tr}`).locked ? " locked" : "") + (trackFlags(project, `overlay:${tr}`).hidden ? " hidden" : "")} data-lane="overlay" data-track=${tr} key=${"o" + tr}>
+          <${TrackHead} k=${`overlay:${tr}`} label=${`Layer ${tr + 1}`} icon="layers" project=${project} />
           ${project.overlays.filter((x) => (x.track ?? 0) === tr).map((x) => laneItem("overlay", x, "overlay", project.media[x.mediaId]?.name, fxBadges(x)))}
         </div>`)}
 
-        <div class="track main-track" data-lane="main">
-          <div class="track-label">Video</div>
+        <div class=${"track main-track" + (trackFlags(project, "main").locked ? " locked" : "") + (trackFlags(project, "main").hidden ? " hidden" : "")} data-lane="main">
+          <${TrackHead} k="main" label="Main" icon="film" project=${project} />
           ${segs.map((s, i) => {
             const media = project.media[s.mediaId];
             const maxSrc = media?.kind === "image" ? 1e9 : (media?.duration ?? s.dur);
@@ -657,8 +697,8 @@ export function Timeline() {
           ${segs.length === 0 && html`<div class="empty">Drag clips here from the library, or preview one and press “Add to timeline”</div>`}
         </div>
 
-        ${audioTracks.map((tr) => html`<div class="track lane-audio" data-lane="audio" data-track=${tr} key=${"a" + tr}>
-          <div class="track-label">Audio ${tr + 1}</div>
+        ${audioTracks.map((tr) => html`<div class=${"track lane-audio" + (trackFlags(project, `audio:${tr}`).locked ? " locked" : "") + (trackFlags(project, `audio:${tr}`).hidden ? " hidden" : "")} data-lane="audio" data-track=${tr} key=${"a" + tr}>
+          <${TrackHead} k=${`audio:${tr}`} label=${`Audio ${tr + 1}`} icon="music" project=${project} hide=${false} />
           ${project.audio.filter((x) => (x.track ?? 0) === tr).map((x) => {
             const media = project.media[x.mediaId];
             return laneItem("audio", x, "audio", media?.name, [html`<${Wave} key="w" media=${media} item=${x} width=${x.dur * zoom} height=${LANE_H.audio - 16} />`, ...fxBadges(x)]);

@@ -9,23 +9,24 @@ import {
 import {
   clock, play, pause, togglePlay, seek, toast, importFiles, addMediaToTimeline, splitAtPlayhead, deleteSelection,
   rippleDelete, selectAll, copySelection, cutSelection, paste, duplicateSelection, applyTransition, freezeFrame,
-  localTime, splitAllAtPlayhead, toggleMute, zoomTimeline, openPreview, closePreview, zoomToFit,
+  localTime, splitAllAtPlayhead, toggleMute, zoomTimeline, openPreview, closePreview, zoomToFit, trimToPlayhead,
 } from "./actions.js";
 import { SourceViewer, toggleSource, stepSource, markSource, addFromSource } from "./ui/source.js";
 import { hasKeys, setKey, setStatic } from "./keyframes.js";
 import { exportMp4, exportWav, exportFrame, supportedCodecs, VIDEO_CODECS, QUALITY, bitrateFor } from "./export.js";
 import { transcribe, wordsToCaptions, CAPTION_MODELS } from "./captions.js";
-import { html, fmt, Field } from "./ui/kit.js";
+import { html, fmt, Field, Icon } from "./ui/kit.js";
 import { Inspector } from "./ui/inspector.js";
 import { Timeline, dragGesture } from "./ui/timeline.js";
-import { EffectsTab, FiltersTab, AudioTab, TextTab } from "./ui/library.js";
+import { EffectsTab, FiltersTab, AudioTab, TextTab, AdjustmentTab } from "./ui/library.js";
+import { EFFECT_CATEGORIES } from "./fx.js";
 import { linkWebFonts, loadProjectFonts, loadSystemFonts, loadRecentFonts } from "./ui/fonts.js";
 import {
   saveProject, openProject, newProject, relink, startAutosave, checkRecovery, loadProject, desktop, projectName,
 } from "./project-io.js";
 
 const additiveKey = (e) => e.shiftKey || e.ctrlKey || e.metaKey;
-setState({ snap: true, timelineH: 300, previewQuality: (() => { try { return +localStorage.getItem("cutline.previewQuality") || 1; } catch { return 1; } })() });
+setState({ snap: true, timelineH: Math.max(260, Math.min(460, Math.round(window.innerHeight * 0.38))), previewQuality: (() => { try { return +localStorage.getItem("cutline.previewQuality") || 1; } catch { return 1; } })() });
 
 // ---------------- render loop ----------------
 
@@ -58,9 +59,9 @@ const download = (blob, name) => {
   setTimeout(() => URL.revokeObjectURL(a.href), 10000);
 };
 
-// ---------------- header ----------------
+// ---------------- top bar ----------------
 
-function FileMenu() {
+function MainMenu({ onShortcuts, onExport }) {
   const [open, setOpen] = useState(false);
   const input = useRef();
   useEffect(() => {
@@ -79,52 +80,101 @@ function FileMenu() {
     catch (err) { toast(err.message); }
   };
   return html`<div class="menu">
-    <button onClick=${() => setOpen(!open)}>☰ File</button>
+    <button class="menu-btn" onClick=${() => setOpen(!open)}>Menu <${Icon} n="chevron-down" /></button>
     <input ref=${input} type="file" accept=".cutline,application/json" hidden onChange=${(e) => { const f = e.target.files[0]; e.target.value = ""; if (f) openProject(f); }} />
     ${open && html`<div class="menu-list">
-      <button onClick=${run(newProject)}>New project</button>
+      <button onClick=${run(newProject)}>New project <kbd>Ctrl+W</kbd></button>
       <button onClick=${run(() => (desktop ? openProject() : input.current.click()))}>Open… <kbd>Ctrl+O</kbd></button>
       <button onClick=${run(() => saveProject())}>Save <kbd>Ctrl+S</kbd></button>
-      <button onClick=${run(() => saveProject({ saveAs: true }))}>Save as…</button>
+      <button onClick=${run(() => saveProject({ saveAs: true }))}>Save as… <kbd>Ctrl+Shift+S</kbd></button>
       <hr />
+      <button onClick=${run(() => document.getElementById("import-any")?.click())}>Import media… <kbd>Ctrl+I</kbd></button>
+      <button onClick=${run(onExport)}>Export video… <kbd>Ctrl+E</kbd></button>
       <button onClick=${run(snapshot)}>Export this frame (PNG)</button>
       <button onClick=${run(exportAudio)}>Export audio (WAV)</button>
+      <hr />
+      <button onClick=${run(undo)}>Undo <kbd>Ctrl+Z</kbd></button>
+      <button onClick=${run(redo)}>Redo <kbd>Ctrl+Y</kbd></button>
+      <button onClick=${run(onShortcuts)}>Keyboard shortcuts <kbd>?</kbd></button>
     </div>`}
   </div>`;
 }
 
-function Header({ onCaptions, onExport, onShortcuts }) {
-  const canUndo = useStore((s) => s.canUndo);
-  const canRedo = useStore((s) => s.canRedo);
-  return html`<header>
-    <div class="row"><div class="brand">✂︎ Cutline</div><${FileMenu} /></div>
+function SaveStatus() {
+  const at = useStore((s) => s.autoSavedAt);
+  useStore((s) => s.project); // re-check "unsaved" when the project changes
+  if (at) return html`<span class="savestat"><${Icon} n="circle-check" /> ${desktop ? "Auto saved" : "Saved"}: ${new Date(at).toLocaleTimeString()}</span>`;
+  return html`<span class="savestat dim">${desktop ? "Not saved yet" : "Not saved yet — Menu › Save"}</span>`;
+}
+
+function Header({ onExport, onShortcuts }) {
+  useStore((s) => s.autoSavedAt);
+  const name = projectName();
+  return html`<header class="topbar">
     <div class="row">
-      <button onClick=${undo} disabled=${!canUndo} title="Undo (Ctrl+Z)">↶ Undo</button>
-      <button onClick=${redo} disabled=${!canRedo} title="Redo (Ctrl+Y)">↷ Redo</button>
-      <button onClick=${onShortcuts} title="Keyboard shortcuts (?)">⌨ Shortcuts</button>
+      <div class="brand"><${Icon} n="scissors" /> Cutline</div>
+      <${MainMenu} onShortcuts=${onShortcuts} onExport=${onExport} />
+      <${SaveStatus} />
     </div>
+    <div class="title ell">${name}</div>
     <div class="row">
-      <button onClick=${onCaptions}>Auto captions</button>
-      <button class="primary" onClick=${onExport}>Export</button>
+      <button class="ibtn" onClick=${onShortcuts} title="Keyboard shortcuts (?)"><${Icon} n="keyboard" /></button>
+      <button class="export-btn" onClick=${onExport} title="Export (Ctrl+E)"><${Icon} n="upload" /> Export</button>
     </div>
   </header>`;
 }
 
-// ---------------- left panel ----------------
+// ---------------- left panel: icon tabs + sub-menu + content ----------------
+
+const LIB_TABS = [
+  ["media", "Media", "film"],
+  ["audio", "Audio", "music"],
+  ["text", "Text", "type"],
+  ["effects", "Effects", "sparkles"],
+  ["transitions", "Transitions", "arrow-left-right"],
+  ["captions", "Captions", "captions"],
+  ["filters", "Filters", "aperture"],
+  ["adjust", "Adjustment", "sliders-horizontal"],
+];
+
+const SUB_NAV = {
+  media: [["library", "Library"]],
+  audio: [["music", "Music & sounds"], ["tts", "Text to speech"]],
+  text: [["add", "Add text"], ["presets", "Text presets"], ["captions", "Auto captions"]],
+  effects: EFFECT_CATEGORIES.map((c, i) => [String(i), c]),
+  transitions: [["all", "Transitions"]],
+  captions: [["auto", "Auto captions"]],
+  filters: [["all", "Filters"]],
+  adjust: [["layer", "Adjustment layer"]],
+};
 
 function LeftPanel() {
   const [tab, setTab] = useState("media");
+  const [subs, setSubs] = useState({});
+  const sub = subs[tab] ?? SUB_NAV[tab][0][0];
+  const strip = useRef();
   return html`<aside class="panel left">
-    <div class="tabs">
-      ${[["media", "Media"], ["text", "Text"], ["transitions", "Transitions"], ["effects", "Effects"], ["filters", "Filters"], ["audio", "Audio"]].map(([k, l]) => html`<button key=${k}
-        class=${tab === k ? "tab on" : "tab"} onClick=${() => setTab(k)}>${l}</button>`)}
+    <nav class="libtabs" ref=${strip}>
+      ${LIB_TABS.map(([k, l, icon]) => html`<button key=${k} class=${tab === k ? "on" : ""} onClick=${() => setTab(k)} title=${l}>
+        <${Icon} n=${icon} size=${18} /><span>${l}</span>
+      </button>`)}
+      <button class="libmore" title="More" onClick=${() => strip.current && (strip.current.scrollLeft += 160)}><${Icon} n="chevron-right" /></button>
+    </nav>
+    <div class="libbody">
+      <div class="subnav">
+        ${SUB_NAV[tab].map(([k, l]) => html`<button key=${k} class=${sub === k ? "on" : ""} onClick=${() => setSubs({ ...subs, [tab]: k })}>${l}</button>`)}
+      </div>
+      <div class="libcontent">
+        ${tab === "media" && html`<${MediaTab} />`}
+        ${tab === "audio" && html`<${AudioTab} part=${sub} />`}
+        ${tab === "text" && (sub === "captions" ? html`<${CaptionsForm} />` : html`<${TextTab} part=${sub} />`)}
+        ${tab === "effects" && html`<${EffectsTab} cat=${+sub} />`}
+        ${tab === "transitions" && html`<${TransitionsTab} />`}
+        ${tab === "captions" && html`<${CaptionsForm} />`}
+        ${tab === "filters" && html`<${FiltersTab} />`}
+        ${tab === "adjust" && html`<${AdjustmentTab} />`}
+      </div>
     </div>
-    ${tab === "media" && html`<${MediaTab} />`}
-    ${tab === "text" && html`<${TextTab} />`}
-    ${tab === "transitions" && html`<${TransitionsTab} />`}
-    ${tab === "effects" && html`<${EffectsTab} />`}
-    ${tab === "filters" && html`<${FiltersTab} />`}
-    ${tab === "audio" && html`<${AudioTab} />`}
   </aside>`;
 }
 
@@ -133,33 +183,34 @@ function MediaTab() {
   const previewing = useStore((s) => s.preview?.mediaId);
   const input = useRef();
   const [drag, setDrag] = useState(false);
-  return html`<div
+  const items = Object.values(media);
+  return html`<div class=${"media-drop" + (drag ? " on" : "")}
       onDragOver=${(e) => { if ([...e.dataTransfer.types].includes("Files")) { e.preventDefault(); setDrag(true); } }}
       onDragLeave=${() => setDrag(false)}
       onDrop=${(e) => { if (!e.dataTransfer.files.length) return; e.preventDefault(); setDrag(false); importFiles([...e.dataTransfer.files]); }}>
-    <button class="primary wide" onClick=${() => input.current.click()}>+ Import</button>
+    <button class="import-btn" onClick=${() => input.current.click()}><${Icon} n="plus" /> Import</button>
     <input ref=${input} type="file" multiple accept="video/*,image/*,audio/*" hidden
       onChange=${(e) => { importFiles([...e.target.files]); e.target.value = ""; }} />
-    <div class=${"drop" + (drag ? " on" : "")}>or drop files here</div>
-    ${Object.keys(media).length > 0 && html`<p class="muted">Click to preview · double-click or ＋ to add · drag onto the timeline</p>`}
-    <div class="media-list">
-      ${Object.values(media).map((m) => html`<div class=${"media-item" + (m.missing ? " missing" : "") + (previewing === m.id ? " active" : "")} key=${m.id}
-          title=${m.missing ? "File not found — use File › Open again or relink" : "Click to preview in the viewer · double-click to add to the timeline · or drag it onto the timeline"}
+    ${!items.length && html`<div class="drop-hint"><${Icon} n="upload" size=${28} /><span>Drag and drop videos, photos and audio here</span></div>`}
+    <div class="media-grid">
+      ${items.map((m) => html`<div class=${"mcard" + (m.missing ? " missing" : "") + (previewing === m.id ? " active" : "")} key=${m.id}
+          title=${m.missing ? "File not found — use Menu › Open again or relink" : `${m.name}\nClick to preview · double-click to add · drag onto the timeline`}
           draggable=${!m.missing}
           onDragStart=${(e) => { e.dataTransfer.setData("text/x-cutline-media", m.id); e.dataTransfer.effectAllowed = "copy"; }}
           onClick=${() => !m.missing && openPreview(m.id)}
           onDoubleClick=${() => !m.missing && addMediaToTimeline(m)}>
-        ${m.kind === "image" ? html`<img src=${m.url} draggable="false" />`
-          : m.kind === "audio" ? html`<div class="audio-thumb">♪</div>`
-          : html`<video src=${m.url ? m.url + "#t=0.5" : ""} muted preload="metadata" />`}
-        <span>${m.name}</span>
-        <small>${m.missing ? "missing" : fmt(m.duration)}
-          ${m.noPicture && html`<b class="warn" title="This video's format can't be shown. Convert it to MP4 (H.264).">⚠ can't play</b>`}
-          ${!m.missing && html`<button class="mini add" title=${m.kind === "audio" ? "Add to an audio track at the playhead" : "Add to the end of the main track"}
-            onClick=${(e) => { e.stopPropagation(); addMediaToTimeline(m); }}>＋ Add</button>`}
-          ${!m.missing && m.kind !== "audio" && html`<button class="mini add" title="Add as a picture-in-picture layer at the playhead"
-            onClick=${(e) => { e.stopPropagation(); addMediaToTimeline(m, "overlay"); }}>＋ Layer</button>`}
-        </small>
+        <div class="mthumb">
+          ${m.kind === "image" ? html`<img src=${m.url} draggable="false" />`
+            : m.kind === "audio" ? html`<div class="audio-thumb"><${Icon} n="audio-lines" size=${26} /></div>`
+            : html`<video src=${m.url ? m.url + "#t=0.5" : ""} muted preload="metadata" />`}
+          <span class="mdur">${m.missing ? "missing" : m.kind === "image" ? "" : fmt(m.duration).replace(/\.\d+$/, "")}</span>
+          ${m.noPicture && html`<span class="mwarn" title="This video's format can't be shown. Convert it to MP4 (H.264).">⚠</span>`}
+          ${!m.missing && html`<button class="madd" title=${m.kind === "audio" ? "Add to an audio track at the playhead" : "Add to the end of the main track"}
+            onClick=${(e) => { e.stopPropagation(); addMediaToTimeline(m); }}><${Icon} n="plus" /></button>`}
+          ${!m.missing && m.kind !== "audio" && html`<button class="mlayer" title="Add as a picture-in-picture layer at the playhead"
+            onClick=${(e) => { e.stopPropagation(); addMediaToTimeline(m, "overlay"); }}><${Icon} n="layers" /></button>`}
+        </div>
+        <span class="mname ell">${m.name}</span>
       </div>`)}
     </div>
   </div>`;
@@ -222,8 +273,10 @@ function Player() {
   }, [previewW, previewH, quality, width]);
 
   const previewing = useStore((s) => !!s.preview);
-  return html`<section class=${"player" + (previewing ? " previewing" : "")}>
+  const ratio = (w, h) => edit((p) => Object.assign(p, { width: w, height: h }));
+  return html`<section class=${"panel player" + (previewing ? " previewing" : "")}>
     ${previewing && html`<${SourceViewer} />`}
+    <div class="phead"><span>Player</span><span class="muted">${width}×${height} · ${useStore((s) => s.project.fps)} fps</span></div>
     <div class="stage" ref=${stage}>
       <canvas ref=${canvas} width=${previewW} height=${previewH} />
       ${rect && html`<${TransformOverlay} rect=${rect} />`}
@@ -234,17 +287,26 @@ function Player() {
       </div>`}
     </div>
     <div class="transport">
-      <button onClick=${() => seek(0)} title="Go to start (Home)">⏮</button>
-      <button class="play" onClick=${togglePlay} title="Play/pause (Space)">${playing ? "❚❚" : "▶"}</button>
-      <button onClick=${() => seek(duration)} title="Go to end (End)">⏭</button>
-      <span class="tc">${fmt(time)} / ${fmt(duration)}</span>
-      <select class="pq" value=${quality} title="Preview quality: lower is smoother on slower computers (export is always full quality)"
-        onChange=${(e) => { const q = +e.target.value; setState({ previewQuality: q }); try { localStorage.setItem("cutline.previewQuality", q); } catch {} }}>
-        <option value="1">Preview: Full</option>
-        <option value="0.5">Preview: ½</option>
-        <option value="0.25">Preview: ¼</option>
-      </select>
-      <span class="hint">Click the video to select · drag to move · corners resize · top handle rotates</span>
+      <span class="tc"><b>${fmt(time)}</b> <span>${fmt(duration)}</span></span>
+      <span class="tcenter">
+        <button class="ibtn" onClick=${() => seek(0)} title="Go to start (Home)"><${Icon} n="skip-back" /></button>
+        <button class="ibtn play" onClick=${togglePlay} title="Play/pause (Space)"><${Icon} n=${playing ? "pause" : "play"} size=${18} /></button>
+        <button class="ibtn" onClick=${() => seek(duration)} title="Go to end (End)"><${Icon} n="skip-forward" /></button>
+      </span>
+      <span class="tright">
+        <select class="pq" value=${quality} title="Preview quality: lower is smoother on slower computers (export is always full quality)"
+          onChange=${(e) => { const q = +e.target.value; setState({ previewQuality: q }); try { localStorage.setItem("cutline.previewQuality", q); } catch {} }}>
+          <option value="1">Full</option>
+          <option value="0.5">½</option>
+          <option value="0.25">¼</option>
+        </select>
+        <button class=${"ibtn" + (useStore((s) => s.axis) ? " on" : "")} onClick=${() => setState({ axis: !getState().axis })} title="Guides and safe area (G)"><${Icon} n="scan" /></button>
+        <select class="pq" title="Canvas ratio" value=${`${width}x${height}`} onChange=${(e) => { const [w, h] = e.target.value.split("x").map(Number); ratio(w, h); }}>
+          ${[["16:9", 1920, 1080], ["9:16", 1080, 1920], ["1:1", 1080, 1080], ["4:5", 1080, 1350], ["4:3", 1440, 1080], ["21:9", 2560, 1080]].map(([l, w, h]) => html`<option value=${`${w}x${h}`}>${l}</option>`)}
+          ${![[1920, 1080], [1080, 1920], [1080, 1080], [1080, 1350], [1440, 1080], [2560, 1080]].some(([w, h]) => w === width && h === height) && html`<option value=${`${width}x${height}`}>Ratio</option>`}
+        </select>
+        <button class="ibtn" title="Full screen" onClick=${() => (document.fullscreenElement ? document.exitFullscreen() : stage.current.requestFullscreen?.())}><${Icon} n="maximize" /></button>
+      </span>
     </div>
   </section>`;
 }
@@ -254,7 +316,10 @@ function visibleItems(project, t) {
   const texts = project.texts.filter((x) => t >= x.start && t < x.start + x.dur).reverse().map((x) => ({ kind: "text", item: x }));
   const layers = activeOverlays(project, t).reverse().map((o) => ({ kind: "overlay", item: o.item }));
   const clips = activeClips(project, t).clips.map((c) => ({ kind: "main", item: project.main.find((s) => s.id === c.seg.id) }));
-  return [...texts, ...layers, ...clips].filter((v) => v.item && (v.kind === "text" || project.media[v.item.mediaId]?.kind !== "audio"));
+  const ts = project.trackState || {};
+  const key = (v) => (v.kind === "main" ? "main" : v.kind === "text" ? "text" : `overlay:${v.item.track ?? 0}`);
+  return [...texts, ...layers, ...clips].filter((v) => v.item && (v.kind === "text" || project.media[v.item.mediaId]?.kind !== "audio")
+    && !ts[key(v)]?.hidden && !ts[key(v)]?.locked);
 }
 
 /**
@@ -416,6 +481,8 @@ const SHORTCUTS = [
   ["Double-click / drag a library item", "Add it to the timeline / drop it where you want it"],
   ["Ctrl+W", "Close project (start a new one)"],
   ["Ctrl+Q", "Quit (desktop app)"],
+  ["Q / W", "Delete the part of the clip before / after the playhead"],
+  ["Right-click ◇", "Remove all keyframes of that property"],
   ["Shift/Ctrl + click", "Add to selection"],
   ["Drag empty timeline", "Box-select"],
   ["Drag in preview", "Move · corners resize · top handle rotates"],
@@ -431,7 +498,16 @@ function ShortcutsDialog({ onClose }) {
   <//>`;
 }
 
+/** Auto-captions form, shown in the Captions tab (and the Text › Auto captions sub-menu). */
+function CaptionsForm() {
+  return html`<div class="captions-form"><b class="lib-title">Auto captions</b><${CaptionsBody} inline /></div>`;
+}
+
 function CaptionsDialog({ onClose }) {
+  return html`<${Modal} title="Auto captions" onClose=${onClose}><${CaptionsBody} onDone=${onClose} /><//>`;
+}
+
+function CaptionsBody({ onDone, inline }) {
   const [model, setModel] = useState(Object.keys(CAPTION_MODELS)[0]);
   const [language, setLanguage] = useState("english");
   const [status, setStatus] = useState(null);
@@ -449,13 +525,15 @@ function CaptionsDialog({ onClose }) {
       const caps = wordsToCaptions(chunks);
       if (!caps.length) { setStatus("No speech found."); setBusy(false); return; }
       edit((p) => { p.texts = p.texts.filter((t) => !t.caption).concat(caps); });
-      onClose();
+      setBusy(false);
+      setStatus(`Added ${caps.length} captions.`);
+      onDone?.();
     } catch (err) {
       setStatus("Failed: " + err.message);
       setBusy(false);
     }
   };
-  return html`<${Modal} title="Auto captions" onClose=${busy ? () => {} : onClose}>
+  return html`<div>
     <p class="muted">Speech recognition runs on your computer (Whisper). Nothing is uploaded; the model downloads once.</p>
     <${Field} label="Model">
       <select value=${model} onChange=${(e) => setModel(e.target.value)} disabled=${busy}>
@@ -469,8 +547,8 @@ function CaptionsDialog({ onClose }) {
     <//>`}
     ${status && html`<p class="status">${status}</p>`}
     <button class="primary wide" disabled=${busy} onClick=${run}>${busy ? "Working…" : "Generate captions"}</button>
-    <p class="muted">Replaces any existing auto captions.</p>
-  <//>`;
+    <p class="muted">Replaces any existing auto captions. Select a caption to style them all at once.</p>
+  </div>`;
 }
 
 const RESOLUTIONS = [["720p", 720], ["1080p", 1080], ["1440p (2K)", 1440], ["2160p (4K)", 2160]];
@@ -647,6 +725,9 @@ function useShortcuts(openShortcuts, openExport) {
       if (key === "m") return run(toggleMute);
       if (key === "g") return run(() => setState({ axis: !getState().axis }));
       if (key === "f") return run(() => freezeFrame());
+      if (key === "q") return run(() => trimToPlayhead("left"));
+      if (key === "w") return run(() => trimToPlayhead("right"));
+      if (key === "v" || key === "a") return run(() => setState({ tool: null }));
       if (key === "n") return run(() => { setState({ snap: !getState().snap }); toast(getState().snap ? "Snapping on" : "Snapping off"); });
       if ((key === "delete" || key === "backspace") && e.shiftKey) return run(rippleDelete);
       if (key === "delete" || key === "backspace") return run(deleteSelection);
@@ -679,8 +760,8 @@ function App() {
     window.addEventListener("wheel", noPageZoom, { passive: false });
     return () => window.removeEventListener("wheel", noPageZoom);
   }, []);
-  return html`<div class="app" style=${{ gridTemplateRows: `48px auto minmax(0, 1fr) ${timelineH}px` }}>
-    <${Header} onCaptions=${() => setDialog("captions")} onExport=${() => setDialog("export")} onShortcuts=${() => setDialog("shortcuts")} />
+  return html`<div class="app" style=${{ gridTemplateRows: `38px auto minmax(0, 1fr) ${timelineH}px` }}>
+    <${Header} onExport=${() => setDialog("export")} onShortcuts=${() => setDialog("shortcuts")} />
     <div><${RecoveryBar} /><${RelinkBar} /></div>
     <main>
       <${LeftPanel} />

@@ -330,6 +330,52 @@ export function splitItemAt(kind, id, time) {
   if (x && time > x.start + 0.05 && time < x.start + x.dur - 0.05) edit((p) => splitTimed(p, lane, [id], time));
 }
 
+/**
+ * Q / W: removes the part of the selected clip(s) before (Q) or after (W) the playhead, like most editors.
+ * With nothing selected it works on the main-track clip under the playhead. The main track closes the gap.
+ */
+export function trimToPlayhead(side) {
+  const { project, time, selection } = getState();
+  let targets = selection.filter((s) => ["main", "overlay", "audio", "text", "effect"].includes(s.kind));
+  if (!targets.length) {
+    const seg = layoutMain(project).find((s) => time > s.start && time < s.start + s.dur);
+    if (seg) targets = [{ kind: "main", id: seg.id }];
+  }
+  if (!targets.length) return toast("Select a clip under the playhead first");
+  let n = 0;
+  edit((p) => {
+    const segs = layoutMain(p);
+    for (const t of targets) {
+      const it = findItem(p, t.kind, t.id);
+      if (!it) continue;
+      const start = t.kind === "main" ? segs.find((s) => s.id === t.id)?.start : it.start;
+      const local = time - start;
+      if (local <= 0.02 || local >= it.dur - 0.02) continue;
+      if (side === "left") {
+        if ("in" in it || t.kind === "main") it.in = sourceAt(it, local);
+        if (it.keyframes) shiftKeyframes(it, -local, it.dur - local);
+        if (it.words) it.words = it.words.filter((w) => w.t1 > time);
+        if (t.kind !== "main") it.start = time;
+        it.dur -= local;
+      } else {
+        it.dur = local;
+        if (t.kind === "main") it.transition = null;
+        if (it.words) it.words = it.words.filter((w) => w.t0 < time);
+      }
+      n++;
+    }
+  });
+  if (!n) toast("Move the playhead inside the clip first");
+  else if (side === "left" && targets[0].kind === "main") seek(layoutMain(getState().project).find((s) => s.id === targets[0].id)?.start ?? time);
+}
+
+/** Mirrors the selected clips/layers left-right (toggle). */
+export function mirrorSelection() {
+  const targets = visualTargets();
+  if (!targets.length) return toast("Select a clip to mirror");
+  edit((p) => targets.forEach((t) => { const it = findItem(p, t.kind, t.id); if (it) it.flipH = !it.flipH || undefined; }));
+}
+
 /** M: mutes or unmutes the selected clips, layers and audio. */
 export function toggleMute() {
   const { project, selection } = getState();

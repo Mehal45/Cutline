@@ -19,7 +19,7 @@ export function Section({ title, children, open: initial = true, right }) {
   const [open, setOpen] = useState(initial);
   return html`<div class=${"section" + (open ? " open" : "")}>
     <div class="section-head" onClick=${() => setOpen(!open)}>
-      <span>${open ? "▾" : "▸"} ${title}</span>${right && html`<span onClick=${(e) => e.stopPropagation()}>${right}</span>`}
+      <span>${title} <i class=${"ico caret icon-chevron-" + (open ? "up" : "down")} /></span>${right && html`<span onClick=${(e) => e.stopPropagation()}>${right}</span>`}
     </div>
     ${open && html`<div class="section-body">${children}</div>`}
   </div>`;
@@ -30,9 +30,20 @@ export function itemStart(project, kind, item) {
   return kind === "main" ? layoutMain(project).find((s) => s.id === item.id)?.start ?? 0 : item.start;
 }
 
+/** A Lucide icon from the bundled icon font, e.g. <${Icon} n="scissors" />. */
+export const Icon = ({ n, size }) => html`<i class=${"ico icon-" + n} style=${size ? { fontSize: size + "px" } : undefined} aria-hidden="true" />`;
+
+/** How a value is shown in the number box, worked out from the label formatter ("50%", "12°" or a plain number). */
+function numberMode(format) {
+  const sample = String(format(0.5));
+  if (sample.endsWith("%")) return { show: (v) => Math.round(v * 100), read: (n) => n / 100, unit: "%", step: 1 };
+  if (sample.endsWith("°")) return { show: (v) => Math.round(v * 10) / 10, read: (n) => n, unit: "°", step: 1 };
+  return { show: (v) => Math.round(v * 100) / 100, read: (n) => n, unit: "", step: 0.01 };
+}
+
 /**
- * A slider for an animatable property. The ◆ button adds/removes a keyframe at the playhead; once a
- * property has keyframes, moving the slider edits the keyframe at the playhead (creating one if needed).
+ * A slider row for an animatable property, laid out label · slider · number · ‹ ◇ ›. The diamond adds or removes a
+ * keyframe at the playhead; once a property has keyframes, changing the value edits the keyframe at the playhead.
  */
 export function KSlider({ kind, id, path, label, min, max, step = 0.01, fallback = 0, format = (v) => v.toFixed(2) }) {
   const project = useStore((s) => s.project);
@@ -47,20 +58,22 @@ export function KSlider({ kind, id, path, label, min, max, step = 0.01, fallback
   const ks = keysOf(item, path);
   const prev = [...ks].reverse().find((k) => k.t < lt - 1e-3);
   const next = ks.find((k) => k.t > lt + 1e-3);
-  return html`<div class="kfield">
-    <div class="kfield-head">
-      <span>${label} <b>${format(v)}</b></span>
-      <span class="kbtns">
-        ${animated && html`<button class="mini" title="Previous keyframe" disabled=${!prev} onClick=${() => prev && seek(start + prev.t)}>‹</button>`}
-        <button class=${"kf" + (here ? " on" : animated ? " has" : "")} title=${here ? "Remove keyframe" : "Add keyframe at the playhead"}
-          onClick=${() => toggleKeyframe(kind, id, path, fallback)}>◆</button>
-        ${animated && html`<button class="mini" title="Next keyframe" disabled=${!next} onClick=${() => next && seek(start + next.t)}>›</button>`}
-        ${animated && html`<button class="mini" title="Remove all keyframes" onClick=${() => clearKeyframes(kind, id, path, fallback)}>✕</button>`}
-      </span>
-    </div>
-    <input type="range" min=${min} max=${max} step=${step} value=${v}
+  const mode = numberMode(format);
+  return html`<div class="krow">
+    <span class="klabel" title=${label}>${label}</span>
+    <input class="kslider" type="range" min=${min} max=${max} step=${step} value=${v}
       onPointerDown=${() => checkpoint()} onKeyDown=${() => checkpoint()}
       onChange=${(e) => setAnimatable(kind, id, path, +e.target.value, true)} />
+    <span class="knum"><input type="number" step=${mode.step} value=${mode.show(v)}
+      onFocus=${(e) => e.target.select()}
+      onChange=${(e) => { if (e.target.value === "" || isNaN(+e.target.value)) return; checkpoint(); setAnimatable(kind, id, path, Math.max(min, Math.min(max, mode.read(+e.target.value))), true); }} />${mode.unit && html`<em>${mode.unit}</em>`}</span>
+    <span class="kkf">
+      <button class="kn" title="Previous keyframe" disabled=${!prev} onClick=${() => prev && seek(start + prev.t)}>‹</button>
+      <button class=${"kf" + (here ? " on" : animated ? " has" : "")} title=${here ? "Remove keyframe" : "Add keyframe at the playhead"}
+        onClick=${() => toggleKeyframe(kind, id, path, fallback)}
+        onContextMenu=${(e) => { if (animated) { e.preventDefault(); clearKeyframes(kind, id, path, fallback); } }}>◇</button>
+      <button class="kn" title="Next keyframe" disabled=${!next} onClick=${() => next && seek(start + next.t)}>›</button>
+    </span>
   </div>`;
 }
 

@@ -58,6 +58,14 @@ npm run dist:mac     # build the Mac .dmg (run this on a Mac)
 
 ## Use
 
+**Layout:** a familiar desktop-editor workspace:
+- **Top bar:** Menu (open, save, import, export, shortcuts), the save status, the project name and **Export**.
+- **Left:** media library with icon tabs: Media, Audio, Text, Effects, Transitions, Captions, Filters and Adjustment, each with a sub-menu.
+- **Centre:** the player with timecode, play controls, preview quality, canvas ratio, guides and fullscreen.
+- **Right:** properties tabs (Video · Audio · Speed · Animation · Adjust). Video has Basic, Remove BG and Effects.
+- **Bottom:** the timeline, with a tool bar and per-track lock / hide / mute buttons.
+
+
 - **Import** clips (or drop files on the left panel). They go into the **media library**, not straight onto the timeline.
 - **Preview before adding:** click a library item to play it in the viewer. Mark **In** / **Out** (I / O) to use only part of it. Press **Add to timeline** (Enter) or **Add as layer**.
 - **Other ways to add:** double-click a library item, click **＋ Add** / **＋ Layer** on it, or drag it straight onto the timeline where you want it.
@@ -95,6 +103,8 @@ Press **?** in the app for the full list. On a Mac, use ⌘ where it says Ctrl.
 | B | Razor tool: click a clip to cut it there |
 | H · middle mouse drag | Hand tool: drag to pan the timeline |
 | Delete · Shift+Delete · Esc | Delete · ripple delete · clear selection (or leave a tool) |
+| Q · W | Delete the part of the clip before · after the playhead |
+| V · Right-click ◇ | Select tool · remove all keyframes of that property |
 | M · F · N · G | Mute · freeze frame · snapping · preview guides |
 | Ctrl+Z · Ctrl+Y (or Ctrl+Shift+Z) | Undo · redo |
 | Ctrl+C · Ctrl+X · Ctrl+V | Copy · cut · paste at the playhead |
@@ -144,3 +154,4 @@ Cutline's own code is MIT. It downloads these at run time; none of them are bund
 - [MediaPipe selfie segmenter](https://ai.google.dev/edge/mediapipe/solutions/vision/image_segmenter) (Apache-2.0)
 - [Google Fonts](https://fonts.google.com) (SIL Open Font License)
 - React, htm, mp4box.js and mp4-muxer (MIT/BSD)
+- [Lucide](https://lucide.dev) icons (ISC), bundled in `src/vendor/lucide`

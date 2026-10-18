@@ -14,10 +14,12 @@ import { hasCurve, sourceSpan, rateSamples } from "./speed.js";
 /** Every piece of timeline audio: { item, start, buf-source media } — main clips, overlay layers, audio items. */
 function audioSources(project) {
   const out = [];
-  for (const seg of layoutMain(project)) out.push({ item: seg, start: seg.start, main: true });
-  for (const o of project.overlays || []) out.push({ item: o, start: o.start });
-  for (const a of project.audio || []) out.push({ item: a, start: a.start });
-  return out.filter((s) => !s.item.mute);
+  const ts = project.trackState || {};
+  for (const seg of layoutMain(project)) out.push({ item: seg, start: seg.start, main: true, track: "main" });
+  for (const o of project.overlays || []) out.push({ item: o, start: o.start, track: `overlay:${o.track ?? 0}` });
+  for (const a of project.audio || []) out.push({ item: a, start: a.start, track: `audio:${a.track ?? 0}` });
+  // Muted items and muted tracks are left out; a hidden picture track keeps its sound (like most editors).
+  return out.filter((s) => !s.item.mute && !ts[s.track]?.muted);
 }
 
 /** Whether an item's volume is anything other than a constant 100%. */

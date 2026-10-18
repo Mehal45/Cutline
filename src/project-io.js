@@ -110,6 +110,7 @@ export async function saveProject({ saveAs = false } = {}) {
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   }
   savedSnapshot = getState().project;
+  setState({ autoSavedAt: Date.now() });
   toast("Project saved");
   return true;
 }
@@ -149,7 +150,7 @@ export function startAutosave() {
     const p = getState().project;
     if (p === lastAuto || !hasContent(p) || !isDirty()) return;
     lastAuto = p;
-    try { desktop.autosave(await serialize(p)); } catch { /* ignore */ }
+    try { await desktop.autosave(await serialize(p)); setState({ autoSavedAt: Date.now() }); } catch { /* ignore */ }
   }, 20000);
   window.addEventListener("beforeunload", (e) => {
     if (isDirty()) { e.preventDefault(); e.returnValue = ""; }

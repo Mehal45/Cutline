@@ -51,18 +51,17 @@ function useSource(deps) {
 
 // ---------------- effects ----------------
 
-export function EffectsTab() {
+export function EffectsTab({ cat: fixedCat }) {
   const selCount = useStore((s) => s.selection.filter((x) => x.kind === "main" || x.kind === "overlay").length);
   const [source, refresh] = useSource([]);
-  const [cat, setCat] = useState(0);
+  const [ownCat, setCat] = useState(0);
+  const cat = fixedCat ?? ownCat;
   return html`<div>
+    <div class="row between"><b class="lib-title">${EFFECT_CATEGORIES[cat]}</b><button class="mini" title="Preview on the current frame" onClick=${refresh}>↻ Refresh</button></div>
     <p class="muted">${selCount ? `Click to add to the ${selCount} selected clip${selCount > 1 ? "s" : ""}.` : "Click to add over the timeline at the playhead (or select a clip first)."}</p>
-    <div class="row wrap">
-      <select value=${cat} onChange=${(e) => setCat(+e.target.value)} style=${{ flex: 1 }}>
-        ${EFFECT_CATEGORIES.map((c, i) => html`<option value=${i}>${c}</option>`)}
-      </select>
-      <button title="Preview on the current frame" onClick=${refresh}>↻</button>
-    </div>
+    ${fixedCat == null && html`<select value=${cat} onChange=${(e) => setCat(+e.target.value)} style=${{ width: "100%" }}>
+      ${EFFECT_CATEGORIES.map((c, i) => html`<option value=${i}>${c}</option>`)}
+    </select>`}
     <div class="cards">
       ${Object.entries(EFFECTS).filter(([, d]) => d.cat === cat).map(([k, d]) => html`<button key=${k} class="card" onClick=${(e) => applyEffect(k, { toTimeline: e.altKey })}
           title=${selCount ? "Add to the selected clips (Alt+click: add to the timeline instead)" : "Add to the timeline"}>
@@ -70,8 +69,14 @@ export function EffectsTab() {
         <span>${d.label}</span>
       </button>`)}
     </div>
-    <button class="wide" onClick=${addAdjustmentLayer}>+ Adjustment layer</button>
-    <p class="muted">An adjustment layer colours and filters everything under it on the timeline.</p>
+  </div>`;
+}
+
+export function AdjustmentTab() {
+  return html`<div>
+    <b class="lib-title">Adjustment layer</b>
+    <p class="muted">An adjustment layer colours, filters and adds effects to everything under it on the timeline, for as long as it lasts.</p>
+    <button class="card-big" onClick=${addAdjustmentLayer}><i class="ico icon-sliders-horizontal" /> Add adjustment layer</button>
   </div>`;
 }
 
@@ -91,7 +96,7 @@ export function FiltersTab() {
 
 // ---------------- audio ----------------
 
-export function AudioTab() {
+export function AudioTab({ part }) {
   const input = useRef();
   const [text, setText] = useState("");
   const [voice, setVoice] = useState(TTS_VOICES[0].id);
@@ -110,12 +115,17 @@ export function AudioTab() {
     catch (err) { toast("Text to speech failed: " + err.message); }
     setBusy(false);
   };
-  return html`<div>
+  const music = html`<div>
+    <b class="lib-title">Music & sounds</b>
     <button class="primary wide" onClick=${() => input.current.click()}>+ Import music or sound</button>
     <input ref=${input} type="file" multiple accept="audio/*" hidden
       onChange=${(e) => { importFiles([...e.target.files]); e.target.value = ""; }} />
     <p class="muted">Sounds go to the library (Media tab): click one to listen, then add it to an audio track. Select it on the timeline to change volume, fades, cleanup and voice effects.</p>
-    <h3 style=${{ marginTop: "16px" }}>Text to speech</h3>
+  </div>`;
+  if (part === "music") return music;
+  return html`<div>
+    ${!part && music}
+    <b class="lib-title">Text to speech</b>
     <p class="muted">Natural voices generated on your computer (Kokoro). The voice model (~90 MB) downloads once.</p>
     <textarea rows="4" placeholder=${selectedText ? `Leave empty to read the selected text: "${selectedText.slice(0, 40)}"` : "What should the voice say?"}
       value=${text} onChange=${(e) => setText(e.target.value)} />
@@ -156,11 +166,14 @@ export const TEXT_PRESETS = [
   { label: "हिंदी शीर्षक", style: { size: 100, weight: 800, font: "'Noto Sans', 'Noto Sans Devanagari', sans-serif", strokeWidth: 8 } },
 ];
 
-export function TextTab() {
+export function TextTab({ part }) {
   useEffect(() => { TEXT_PRESETS.forEach((p) => p.style.font && loadFont(p.style.font, p.style.weight, p.style.italic)); }, []);
+  if (part === "add") return html`<div class="tiles">
+    <button class="tile" onClick=${() => addText()} title="Add text at the playhead">Default text</button>
+  </div>`;
   return html`<div>
-    <button class="primary wide" onClick=${() => addText()}>+ Add text</button>
-    <p class="muted">Presets</p>
+    ${!part && html`<button class="primary wide" onClick=${() => addText()}>+ Add text</button>`}
+    <b class="lib-title">Text presets</b>
     <div class="grid2">
       ${TEXT_PRESETS.map((p) => html`<button key=${p.label} class="preset" onClick=${() => addText({ ...p, text: p.label })}
         style=${{ fontFamily: p.style.font, color: p.style.color, fontWeight: p.style.weight, fontStyle: p.style.italic ? "italic" : undefined,

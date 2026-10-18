@@ -1,20 +1,20 @@
 // Right-hand inspector: properties of whatever is selected.
 import React, { useState } from "react";
 import { useStore, edit, editLive, checkpoint, findItem, getState, setState } from "../store.js";
-import { clipSpeed, clipTransform, BLEND_MODES, ANIMATIONS, TRANSITIONS } from "../engine.js";
+import { clipSpeed, clipTransform, BLEND_MODES, ANIMATIONS, TRANSITIONS, itemBounds } from "../engine.js";
 import {
   deleteSelection, rippleDelete, copySelection, duplicateSelection, setClipSpeed, SPEED_PRESETS, freezeFrame,
-  mergeClips, detachAudio, applyFilter, toast,
+  mergeClips, detachAudio, applyFilter, toast, setAnimatable, toggleKeyframe, localTime, mirrorSelection,
 } from "../actions.js";
 import { ADJUST, FILTERS, EFFECTS, EFFECT_CATEGORIES } from "../fx.js";
 import { VOICE_EFFECTS } from "../audiofx.js";
 import { cutoutStatus, loadCutout } from "../segment.js";
 import { uid } from "../store.js";
-import { html, Field, Section, KSlider, Slider, CurveEditor } from "./kit.js";
+import { html, Field, Section, KSlider, Slider, CurveEditor, Icon } from "./kit.js";
 import { FONTS, loadFont, familyCss, canListSystemFonts, loadSystemFonts, rememberFont, fontName } from "./fonts.js";
 import { SpeedCurveEditor } from "./speedcurve.js";
 import { hasCurve } from "../speed.js";
-import { setDefaultEase, defaultEase } from "../keyframes.js";
+import { setDefaultEase, defaultEase, propAt, hasKeys, keyAt } from "../keyframes.js";
 
 const pct = (v) => `${Math.round(v * 100)}%`;
 const deg = (v) => `${Math.round(v)}°`;
@@ -22,6 +22,22 @@ const signed = (v) => (v > 0 ? "+" : "") + (Math.abs(v) < 0.005 ? "0" : v.toFixe
 
 function Tabs({ tabs, tab, setTab }) {
   return html`<div class="itabs">${tabs.map(([k, l]) => html`<button key=${k} class=${tab === k ? "tab on" : "tab"} onClick=${() => setTab(k)}>${l}</button>`)}</div>`;
+}
+
+/** The inspector frame: text tabs along the top (Video · Audio · Speed …) and a scrolling body. */
+function Shell({ tabs, tab, setTab, children, note }) {
+  return html`<aside class="panel inspector">
+    <nav class="itop">
+      ${tabs.map(([k, l]) => html`<button key=${k} class=${tab === k ? "on" : ""} onClick=${() => setTab?.(k)}>${l}</button>`)}
+      ${note && html`<span class="itop-note ell">${note}</span>`}
+    </nav>
+    <div class="ibody">${children}</div>
+  </aside>`;
+}
+
+/** Segmented sub-tabs (Basic | Remove BG | Effects). */
+function Seg({ items, value, onChange }) {
+  return html`<div class="seg-ctl">${items.map(([k, l]) => html`<button key=${k} class=${value === k ? "on" : ""} onClick=${() => onChange(k)}>${l}</button>`)}</div>`;
 }
 
 function AnimFields({ anim, onChange, textOnly }) {
@@ -67,18 +83,84 @@ const liveSet = (kind, id) => (fn, live) => (live ? editLive : edit)((p) => fn(f
 
 // ---------------- visual items (main clips + overlay layers) ----------------
 
+/** Position X/Y in pixels from the centre, both keyframed together. */
+function PosRow({ kind, id }) {
+  const project = useStore((st) => st.project);
+  const time = useStore((st) => st.time);
+  const item = findItem(project, kind, id);
+  const lt = localTime(project, kind, item, time);
+  const W = project.width, H = project.height;
+  const x = propAt(item, "x", lt, 0.5), y = propAt(item, "y", lt, 0.5);
+  const animated = hasKeys(item, "x") || hasKeys(item, "y");
+  const here = keyAt(item, "x", lt) || keyAt(item, "y", lt);
+  const setPx = (path, px, dim) => { checkpoint(); setAnimatable(kind, id, path, 0.5 + px / dim, true); };
+  const toggle = () => {
+    for (const k of ["x", "y"]) if (!!keyAt(item, k, lt) === !!here) toggleKeyframe(kind, id, k, 0.5);
+  };
+  return html`<div class="krow pos">
+    <span class="klabel">Position</span>
+    <span class="xy"><b>X</b><input type="number" step="1" value=${Math.round((x - 0.5) * W)} onFocus=${(e) => e.target.select()}
+      onChange=${(e) => e.target.value !== "" && setPx("x", +e.target.value, W)} /></span>
+    <span class="xy"><b>Y</b><input type="number" step="1" value=${Math.round((y - 0.5) * H)} onFocus=${(e) => e.target.select()}
+      onChange=${(e) => e.target.value !== "" && setPx("y", +e.target.value, H)} /></span>
+    <span class="kkf"><span class="kn"></span>
+      <button class=${"kf" + (here ? " on" : animated ? " has" : "")} title=${here ? "Remove position keyframe" : "Add position keyframe at the playhead"} onClick=${toggle}>◇</button>
+      <span class="kn"></span></span>
+  </div>`;
+}
+
+/** Aligns the item's visible box to the left/centre/right or top/middle/bottom edge of the frame. */
+function AlignRow({ kind, id }) {
+  const align = (axis, where) => {
+    const { project, time } = getState();
+    const item = findItem(project, kind, id);
+    const b = itemBounds(project, kind, item, project.width, project.height, time);
+    if (!b) return;
+    const lt = localTime(project, kind, item, time);
+    const half = axis === "x" ? b.w / 2 : b.h / 2;
+    const c = axis === "x" ? b.cx : b.cy;
+    const target = where === 0 ? half : where === 1 ? 0.5 : 1 - half;
+    const cur = propAt(item, axis, lt, 0.5);
+    checkpoint();
+    setAnimatable(kind, id, axis, cur + (target - c), true);
+  };
+  const btn = (icon, title, axis, where) => html`<button class="ibtn" title=${title} onClick=${() => align(axis, where)}><${Icon} n=${icon} /></button>`;
+  return html`<div class="align-row">
+    ${btn("align-horizontal-justify-start", "Align left", "x", 0)}
+    ${btn("align-horizontal-justify-center", "Centre horizontally", "x", 1)}
+    ${btn("align-horizontal-justify-end", "Align right", "x", 2)}
+    ${btn("align-vertical-justify-start", "Align top", "y", 0)}
+    ${btn("align-vertical-justify-center", "Centre vertically", "y", 1)}
+    ${btn("align-vertical-justify-end", "Align bottom", "y", 2)}
+  </div>`;
+}
+
 function TransformSection({ kind, id }) {
   const set = liveSet(kind, id);
-  return html`<${Section} title="Position & size">
-    <${KSlider} kind=${kind} id=${id} path="x" label="X" min=${-0.5} max=${1.5} step=${0.005} fallback=${0.5} format=${pct} />
-    <${KSlider} kind=${kind} id=${id} path="y" label="Y" min=${-0.5} max=${1.5} step=${0.005} fallback=${0.5} format=${pct} />
+  const isText = kind === "text";
+  const reset = () => set((s) => {
+    if (isText) Object.assign(s, { x: 0.5, y: s.caption ? 0.82 : 0.5, scale: 1, rotation: 0 });
+    else s.transform = { x: 0.5, y: 0.5, scale: kind === "overlay" ? 0.45 : 1, rotation: 0 };
+    if (s.keyframes) for (const k of ["x", "y", "scale", "rotation"]) delete s.keyframes[k];
+  });
+  return html`<${Section} title="Transform" right=${html`<button class="ibtn" title="Reset position, size and rotation" onClick=${reset}><${Icon} n="rotate-ccw" /></button>`}>
     <${KSlider} kind=${kind} id=${id} path="scale" label="Scale" min=${0.05} max=${4} fallback=${1} format=${pct} />
-    <${KSlider} kind=${kind} id=${id} path="rotation" label="Rotation" min=${-180} max=${180} step=${1} fallback=${0} format=${deg} />
-    <${KSlider} kind=${kind} id=${id} path="opacity" label="Opacity" min=${0} max=${1} fallback=${1} format=${pct} />
-    <button class="wide" onClick=${() => set((s) => {
-      s.transform = { x: 0.5, y: 0.5, scale: kind === "overlay" ? 0.45 : 1, rotation: 0 };
-      if (s.keyframes) for (const k of ["x", "y", "scale", "rotation"]) delete s.keyframes[k];
-    })}>Reset position & size</button>
+    <${PosRow} kind=${kind} id=${id} />
+    <${KSlider} kind=${kind} id=${id} path="rotation" label="Rotate" min=${-180} max=${180} step=${1} fallback=${0} format=${deg} />
+    <${AlignRow} kind=${kind} id=${id} />
+  <//>`;
+}
+
+function BlendSection({ kind, item }) {
+  const set = liveSet(kind, item.id);
+  return html`<${Section} title="Blend">
+    <${KSlider} kind=${kind} id=${item.id} path="opacity" label="Opacity" min=${0} max=${1} fallback=${1} format=${pct} />
+    <div class="krow">
+      <span class="klabel">Mode</span>
+      <select class="kwide" value=${item.blend || "normal"} onChange=${(e) => set((s) => (s.blend = e.target.value === "normal" ? undefined : e.target.value))}>
+        ${Object.entries(BLEND_MODES).map(([k, [l]]) => html`<option value=${k}>${l}</option>`)}
+      </select>
+    </div>
   <//>`;
 }
 
@@ -92,15 +174,10 @@ function LookSection({ kind, item }) {
     if (c.t + c.b > 0.95) c[k] = 0.95 - (k === "t" ? c.b : c.t);
     s.crop = c;
   }, live);
-  return html`<${Section} title="Blend, flip & crop" open=${!!(item.blend || item.flipH || item.flipV || item.crop)}>
-    <${Field} label="Blend mode">
-      <select value=${item.blend || "normal"} onChange=${(e) => set((s) => (s.blend = e.target.value === "normal" ? undefined : e.target.value))}>
-        ${Object.entries(BLEND_MODES).map(([k, [l]]) => html`<option value=${k}>${l}</option>`)}
-      </select>
-    <//>
+  return html`<${Section} title="Crop & flip" open=${!!(item.flipH || item.flipV || item.crop)}>
     <div class="grid2">
-      <button class=${item.flipH ? "chip on" : "chip"} onClick=${() => set((s) => (s.flipH = !s.flipH))}>⇋ Flip horizontal</button>
-      <button class=${item.flipV ? "chip on" : "chip"} onClick=${() => set((s) => (s.flipV = !s.flipV))}>⇵ Flip vertical</button>
+      <button class=${item.flipH ? "chip on" : "chip"} onClick=${() => set((s) => (s.flipH = !s.flipH))}><${Icon} n="flip-horizontal-2" /> Flip horizontal</button>
+      <button class=${item.flipV ? "chip on" : "chip"} onClick=${() => set((s) => (s.flipV = !s.flipV))}><${Icon} n="flip-vertical-2" /> Flip vertical</button>
     </div>
     <div class="grid2">
       ${[["l", "Crop left"], ["r", "Crop right"], ["t", "Crop top"], ["b", "Crop bottom"]].map(([k, l]) => html`<${Slider} key=${k}
@@ -280,32 +357,34 @@ function AnimateSection({ kind, item, textOnly, onAnim, note }) {
 }
 
 function VisualInspector({ kind, item, project }) {
-  const [tab, setTab] = useState("basic");
+  const [tab, setTab] = useState("video");
+  const [sub, setSub] = useState("basic");
   const media = project.media[item.mediaId];
   const hasSound = media?.kind === "video";
-  const tabs = [["basic", "Basic"], ["speed", "Speed"], ["color", "Colour"], ["effects", "Effects"], ["cutout", "Cutout"], ...(hasSound ? [["audio", "Audio"]] : []), ["animate", "Animate"]];
-  const t = tabs.some(([k]) => k === tab) ? tab : "basic";
-  return html`<aside class="panel inspector">
-    <h3>${kind === "overlay" ? "Layer" : "Clip"}</h3>
-    <p class="muted ell">${media?.name}</p>
-    <${Tabs} tabs=${tabs} tab=${t} setTab=${setTab} />
-    ${t === "basic" && html`
-      <${TransformSection} kind=${kind} id=${item.id} />
-      <${SourceSection} kind=${kind} item=${item} media=${media} />
-      <${LookSection} kind=${kind} item=${item} />
-      <div class="grid2">
-        ${media?.kind === "video" && html`<button onClick=${() => freezeFrame()} title="Hold the frame under the playhead for 3 seconds">❄ Freeze frame</button>`}
-        ${kind === "main" && html`<button onClick=${mergeClips} title="Select neighbouring pieces of one clip, then merge">⊕ Merge</button>`}
-      </div>`}
-    ${t === "speed" && html`<${SpeedFields} speed=${clipSpeed(item)} ids=${[item.id]} kind=${kind} id=${item.id} />`}
-    ${t === "color" && html`<${FilterSection} kind=${kind} item=${item} /><${AdjustSection} kind=${kind} item=${item} />`}
-    ${t === "effects" && html`<${EffectsSection} kind=${kind} item=${item} />`}
-    ${t === "cutout" && html`<${CutoutSection} kind=${kind} item=${item} />`}
+  const tabs = [["video", "Video"], ...(hasSound ? [["audio", "Audio"]] : []), ["speed", "Speed"], ["animation", "Animation"], ["adjust", "Adjust"]];
+  const t = tabs.some(([k]) => k === tab) ? tab : "video";
+  return html`<${Shell} tabs=${tabs} tab=${t} setTab=${setTab} note=${media?.name}>
+    ${t === "video" && html`
+      <${Seg} items=${[["basic", "Basic"], ["removebg", "Remove BG"], ["effects", "Effects"]]} value=${sub} onChange=${setSub} />
+      ${sub === "basic" && html`
+        <${TransformSection} kind=${kind} id=${item.id} />
+        <${BlendSection} kind=${kind} item=${item} />
+        <${LookSection} kind=${kind} item=${item} />
+        <${SourceSection} kind=${kind} item=${item} media=${media} />
+        <div class="action-row">
+          ${media?.kind === "video" && html`<button onClick=${() => freezeFrame()} title="Hold the frame under the playhead for 3 seconds (F)"><${Icon} n="snowflake" /> Freeze</button>`}
+          ${kind === "main" && html`<button onClick=${mergeClips} title="Select neighbouring pieces of one clip, then merge"><${Icon} n="combine" /> Merge</button>`}
+          <button onClick=${mirrorSelection} title="Mirror left-right"><${Icon} n="flip-horizontal-2" /> Mirror</button>
+          ${kind === "overlay" && html`<button onClick=${rippleDelete} title="Delete and close the gap (Shift+Delete)"><${Icon} n="between-horizontal-start" /> Ripple delete</button>`}
+          <button class="danger" onClick=${deleteSelection}><${Icon} n="trash-2" /> Delete</button>
+        </div>`}
+      ${sub === "removebg" && html`<${CutoutSection} kind=${kind} item=${item} />`}
+      ${sub === "effects" && html`<${EffectsSection} kind=${kind} item=${item} />`}`}
     ${t === "audio" && html`<${AudioSection} kind=${kind} item=${item} media=${media} />`}
-    ${t === "animate" && html`<${AnimateSection} kind=${kind} item=${item} />`}
-    <button class="danger wide" onClick=${deleteSelection}>Delete ${kind === "overlay" ? "layer" : "clip"}</button>
-    ${kind === "overlay" && html`<button class="wide" onClick=${rippleDelete} title="Delete and close the gap (Shift+Delete)">Ripple delete</button>`}
-  </aside>`;
+    ${t === "speed" && html`<${SpeedFields} speed=${clipSpeed(item)} ids=${[item.id]} kind=${kind} id=${item.id} />`}
+    ${t === "animation" && html`<${AnimateSection} kind=${kind} item=${item} />`}
+    ${t === "adjust" && html`<${FilterSection} kind=${kind} item=${item} /><${AdjustSection} kind=${kind} item=${item} />`}
+  <//>`;
 }
 
 // ---------------- text ----------------
@@ -424,24 +503,15 @@ function TextInspector({ t }) {
       Apply changes to all ${captionCount} captions</label>
     <button class="mini" onClick=${selectAllCaptions} title="Select every caption on the timeline">Select all</button>
   </div>`;
-  return html`<aside class="panel inspector">
-    <h3>${t.caption ? "Caption" : "Text"}</h3>
+  return html`<${Shell} tabs=${[["text", t.caption ? "Caption" : "Text"], ["style", "Style"], ["animate", "Animation"]]} tab=${tab} setTab=${setTab}>
     ${linkBox}
-    <${Tabs} tabs=${[["text", "Text"], ["style", "Style"], ["animate", "Animate"]]} tab=${tab} setTab=${setTab} />
     ${tab === "text" && html`
       <textarea rows="3" value=${t.text} onChange=${(e) => set((x) => { x.text = e.target.value; delete x.words; })} />
       ${t.caption && t.words && html`<p class="muted">Editing the text removes word-by-word highlighting for this caption.</p>`}
       <${TextFontFields} st=${st} setSt=${setSt} />
-      <${Section} title="Position & size">
-        <${KSlider} kind="text" id=${t.id} path="x" label="X" min=${-0.5} max=${1.5} step=${0.005} fallback=${0.5} format=${pct} />
-        <${KSlider} kind="text" id=${t.id} path="y" label="Y" min=${-0.5} max=${1.5} step=${0.005} fallback=${0.5} format=${pct} />
-        <${KSlider} kind="text" id=${t.id} path="scale" label="Scale" min=${0.05} max=${4} fallback=${1} format=${pct} />
-        <${KSlider} kind="text" id=${t.id} path="rotation" label="Rotation" min=${-180} max=${180} step=${1} fallback=${0} format=${deg} />
+      <${TransformSection} kind="text" id=${t.id} />
+      <${Section} title="Opacity">
         <${KSlider} kind="text" id=${t.id} path="opacity" label="Opacity" min=${0} max=${1} fallback=${1} format=${pct} />
-        <button class="wide" onClick=${() => set((x) => {
-          Object.assign(x, { x: 0.5, y: t.caption ? 0.82 : 0.5, scale: 1, rotation: 0 });
-          if (x.keyframes) for (const k of ["x", "y", "scale", "rotation"]) delete x.keyframes[k];
-        })}>Reset position & size</button>
       <//>`}
     ${tab === "style" && html`
       <${TextLookFields} st=${st} setSt=${setSt} />
@@ -449,8 +519,8 @@ function TextInspector({ t }) {
     ${tab === "animate" && html`<${AnimateSection} kind="text" item=${t} textOnly
       onAnim=${allCaptions ? setAnimOn(new Set(getState().project.texts.filter((x) => x.caption).map((x) => x.id))) : undefined}
       note=${allCaptions && html`<p class="muted">Changes apply to all ${captionCount} captions.</p>`} />`}
-    <button class="danger wide" onClick=${deleteSelection}>Delete</button>
-  </aside>`;
+    <button class="danger wide" onClick=${deleteSelection}><${Icon} n="trash-2" /> Delete</button>
+  <//>`;
 }
 
 /** Shown when several texts/captions are selected: one set of controls changes all of them. */
@@ -483,31 +553,31 @@ function MultiTextFields({ texts }) {
 
 function AudioInspector({ item, project }) {
   const media = project.media[item.mediaId];
-  return html`<aside class="panel inspector">
-    <h3>Audio</h3>
-    <p class="muted ell">${media?.name}</p>
-    <${SpeedFields} speed=${clipSpeed(item)} ids=${[item.id]} kind="audio" id=${item.id} />
-    <${AudioSection} kind="audio" item=${item} media=${media} />
-    <${Section} title="Volume keyframe curves" open=${false}><${CurveEditor} kind="audio" id=${item.id} /><//>
-    <button class="danger wide" onClick=${deleteSelection}>Delete</button>
-    <button class="wide" onClick=${rippleDelete} title="Delete and close the gap (Shift+Delete)">Ripple delete</button>
-  </aside>`;
+  const [tab, setTab] = useState("audio");
+  return html`<${Shell} tabs=${[["audio", "Audio"], ["speed", "Speed"]]} tab=${tab} setTab=${setTab} note=${media?.name}>
+    ${tab === "audio" && html`
+      <${AudioSection} kind="audio" item=${item} media=${media} />
+      <${Section} title="Volume keyframe curves" open=${false}><${CurveEditor} kind="audio" id=${item.id} /><//>`}
+    ${tab === "speed" && html`<${SpeedFields} speed=${clipSpeed(item)} ids=${[item.id]} kind="audio" id=${item.id} />`}
+    <div class="action-row">
+      <button onClick=${rippleDelete} title="Delete and close the gap (Shift+Delete)"><${Icon} n="between-horizontal-start" /> Ripple delete</button>
+      <button class="danger" onClick=${deleteSelection}><${Icon} n="trash-2" /> Delete</button>
+    </div>
+  <//>`;
 }
 
 function EffectInspector({ item }) {
   const [tab, setTab] = useState("effects");
   const set = liveSet("effect", item.id);
-  return html`<aside class="panel inspector">
-    <h3>Timeline effect</h3>
+  return html`<${Shell} tabs=${[["effects", "Effects"], ["color", "Adjust"], ["animate", "Curves"]]} tab=${tab} setTab=${setTab}>
     <${Field} label="Name"><input value=${item.name || ""} onChange=${(e) => set((x) => (x.name = e.target.value))} /><//>
     <p class="muted">Applies to every clip and layer under it, for as long as it lasts on the timeline.</p>
     <${KSlider} kind="effect" id=${item.id} path="opacity" label="Mix" min=${0} max=${1} fallback=${1} format=${pct} />
-    <${Tabs} tabs=${[["effects", "Effects"], ["color", "Colour"], ["animate", "Curves"]]} tab=${tab} setTab=${setTab} />
     ${tab === "effects" && html`<${EffectsSection} kind="effect" item=${item} />`}
     ${tab === "color" && html`<${FilterSection} kind="effect" item=${item} /><${AdjustSection} kind="effect" item=${item} />`}
     ${tab === "animate" && html`<${CurveEditor} kind="effect" id=${item.id} />`}
-    <button class="danger wide" onClick=${deleteSelection}>Delete</button>
-  </aside>`;
+    <button class="danger wide" onClick=${deleteSelection}><${Icon} n="trash-2" /> Delete</button>
+  <//>`;
 }
 
 // ---------------- entry ----------------
@@ -520,8 +590,7 @@ export function Inspector() {
     const clipIds = selection.filter((s) => s.kind === "main" || s.kind === "overlay").map((s) => s.id);
     const first = clipIds.map((id) => project.main.find((s) => s.id === id) || project.overlays.find((s) => s.id === id)).find(Boolean);
     const texts = selection.filter((s) => s.kind === "text").map((s) => project.texts.find((x) => x.id === s.id)).filter(Boolean);
-    return html`<aside class="panel inspector">
-      <h3>${selection.length} items selected</h3>
+    return html`<${Shell} tabs=${[["sel", `${selection.length} selected`]]} tab="sel">
       ${texts.length > 0 && html`<${MultiTextFields} key=${texts.map((x) => x.id).join()} texts=${texts} />`}
       <p class="muted">Drag in the preview to move them together. Ctrl+C copy · Ctrl+D duplicate · Del delete.</p>
       ${first && html`<${SpeedFields} speed=${clipSpeed(first)} ids=${clipIds} />`}
@@ -535,7 +604,7 @@ export function Inspector() {
       <button class="wide" onClick=${duplicateSelection}>Duplicate</button>
       ${selection.filter((s) => s.kind === "main").length > 1 && html`<button class="wide" onClick=${mergeClips}>Merge clips</button>`}
       <button class="danger wide" onClick=${deleteSelection}>Delete all</button>
-    </aside>`;
+    <//>`;
   }
   const sel = selection[0];
   const item = sel && findItem(project, sel.kind, sel.id);
@@ -544,10 +613,9 @@ export function Inspector() {
 
   if (sel?.kind === "transition") {
     const seg = project.main.find((s) => s.id === sel.id);
-    if (!seg?.transition) return html`<aside class="panel inspector"><h3>Transition</h3></aside>`;
+    if (!seg?.transition) return html`<${Shell} tabs=${[["t", "Transition"]]} tab="t" />`;
     const set = (fn) => edit((p) => fn(p.main.find((s) => s.id === seg.id).transition));
-    return html`<aside class="panel inspector">
-      <h3>Transition</h3>
+    return html`<${Shell} tabs=${[["t", "Transition"]]} tab="t">
       <div class="grid2">
         ${Object.entries(TRANSITIONS).map(([k, label]) => html`<button key=${k}
           class=${seg.transition.type === k ? "chip on" : "chip"} onClick=${() => set((t) => (t.type = k))}>${label}</button>`)}
@@ -557,7 +625,7 @@ export function Inspector() {
           onChange=${(e) => set((t) => (t.dur = +e.target.value))} />
       <//>
       <button class="danger wide" onClick=${deleteSelection}>Remove transition</button>
-    </aside>`;
+    <//>`;
   }
 
   if (sel?.kind === "text" && item) return html`<${TextInspector} key=${item.id} t=${item} />`;
@@ -565,8 +633,7 @@ export function Inspector() {
   if (sel?.kind === "effect" && item) return html`<${EffectInspector} key=${item.id} item=${item} />`;
 
   const ratio = (w, h) => edit((p) => Object.assign(p, { width: w, height: h }));
-  return html`<aside class="panel inspector">
-    <h3>Project</h3>
+  return html`<${Shell} tabs=${[["p", "Project"]]} tab="p">
     <${Field} label="Canvas">
       <div class="grid2">
         ${[["16:9", 1920, 1080], ["9:16", 1080, 1920], ["1:1", 1080, 1080], ["4:5", 1080, 1350]].map(([l, w, h]) => html`<button key=${l}
@@ -579,5 +646,5 @@ export function Inspector() {
       </select>
     <//>
     <p class="muted">Click something in the preview or timeline to edit it. Drag across empty timeline space to select several items.</p>
-  </aside>`;
+  <//>`;
 }

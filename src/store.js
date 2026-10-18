@@ -114,6 +114,7 @@ function structuredCloneProject(p) {
     overlays: (p.overlays || []).map((o) => structuredClone(o)),
     audio: (p.audio || []).map((a) => structuredClone(a)),
     effects: (p.effects || []).map((e) => structuredClone(e)),
+    ...(p.trackState ? { trackState: structuredClone(p.trackState) } : {}),
   };
 }
 
@@ -161,9 +162,40 @@ export function freeTrack(list, start, dur, skipId) {
 
 /** Renumbers the tracks of overlays, audio and effects so no empty lanes are left between them (mutates). */
 export function compactTracks(p) {
-  for (const lane of ["overlays", "audio", "effects"]) {
+  const state = p.trackState || {};
+  const moved = {};
+  for (const [lane, kind] of [["overlays", "overlay"], ["audio", "audio"], ["effects", "effect"]]) {
     const used = [...new Set((p[lane] || []).map((x) => x.track ?? 0))].sort((a, b) => a - b);
     const map = new Map(used.map((t, i) => [t, i]));
     for (const x of p[lane] || []) x.track = map.get(x.track ?? 0);
+    // Lock / hide / mute settings follow their track to its new number.
+    for (const [from, to] of map) if (state[`${kind}:${from}`]) moved[`${kind}:${to}`] = state[`${kind}:${from}`];
   }
+  if (p.trackState) p.trackState = { ...(state.main ? { main: state.main } : {}), ...(state.text ? { text: state.text } : {}), ...moved };
 }
+
+// ---------------- track lock / hide / mute ----------------
+
+/** Key of the track an item lives on: "main", "text", "overlay:2", "audio:0", "effect:1". */
+export function trackKey(kind, item) {
+  if (kind === "main" || kind === "transition") return "main";
+  if (kind === "text") return "text";
+  return `${kind}:${item?.track ?? 0}`;
+}
+
+/** { hidden, muted, locked } of a track (all false when never set). */
+export const trackFlags = (project, key) => project.trackState?.[key] || {};
+
+/** Toggles one flag of a track, as an undoable edit. */
+export function toggleTrackFlag(key, flag) {
+  edit((p) => {
+    p.trackState = { ...(p.trackState || {}) };
+    const cur = { ...(p.trackState[key] || {}) };
+    cur[flag] = !cur[flag] || undefined;
+    p.trackState[key] = cur;
+  });
+  if (flag === "locked") setState({ selection: state.selection.filter((s) => trackKey(s.kind, findItem(state.project, s.kind, s.id)) !== key) });
+}
+
+/** True when the item's track is locked (it can't be selected, moved or edited). */
+export const isLocked = (project, kind, item) => !!trackFlags(project, trackKey(kind, item)).locked;
