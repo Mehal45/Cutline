@@ -60,7 +60,7 @@ npm run dist:mac     # build the Mac .dmg (run this on a Mac)
 - **Preview before adding:** click a library item to play it in the viewer. Mark **In** / **Out** (I / O) to use only part of it. Press **Add to timeline** (Enter) or **Add as layer**.
 - **Other ways to add:** double-click a library item, click **＋ Add** / **＋ Layer** on it, or drag it straight onto the timeline where you want it.
 - **Edit in the preview:** click a clip, layer or text to select it, drag to move (it snaps to the centre), drag a corner to resize, or drag the top handle to rotate (hold Shift to snap to 15°).
-- **Timeline:** drag edges to trim and drag items to move them; the clip follows the mouse. Drag main-track clips left/right to reorder them, or up to turn them into a layer; drag a layer down onto the main track to put it back. Hold a dragged clip near the edge and the timeline keeps scrolling. Video clips show a filmstrip of their frames that gets more detailed as you zoom in. Zoom from about 2 hours on screen down to single frames (Ctrl + mouse wheel, the slider, or **⤢ Fit**). Drag across empty space to box-select, and Shift/Ctrl+click to add to the selection. **🧲 Snap** lines edges up with the playhead and other clips. Drag the top edge of the timeline to resize it.
+- **Timeline:** drag edges to trim and drag items to move them; the clip follows the mouse. Drag main-track clips left/right to reorder them, or up to turn them into a layer; drag a layer down onto the main track to put it back. Hold a dragged clip near the edge and the timeline keeps scrolling. Zoom from about 2 hours on screen down to single frames (Ctrl + mouse wheel, the slider, or **⤢ Fit**). Drag across empty space to box-select, and Shift/Ctrl+click to add to the selection. **🧲 Snap** lines edges up with the playhead and other clips. Drag the top edge of the timeline to resize it.
 - **Inspector tabs** (right panel), for a selected clip or layer:
   - **Basic:** position, size, opacity, speed, timing, blend mode, crop, flips, freeze frame and merge.
   - **Colour:** filters and adjustments.
@@ -111,7 +111,6 @@ Press **?** in the app for the full list. On a Mac, use ⌘ where it says Ctrl.
 | `src/segment.js` | Background removal for people (MediaPipe selfie segmenter) |
 | `src/tts.js`, `src/tts-worker.js` | Text-to-speech (Kokoro-82M via kokoro-js) |
 | `src/project-io.js` | Saving/opening `.cutline` projects, relinking media, autosave |
-| `src/thumbs.js` | Timeline filmstrip thumbnails (frames grabbed on demand and cached) |
 | `src/ui/*.js` | Inspector, timeline, effect/filter/audio/text catalogues, fonts, shared UI pieces |
 | `src/engine.js` | Compositing, animation presets, text rendering, WebGL transition shaders, video sync |
 | `src/export.js` | Offline audio mix + WebCodecs H.264/AAC encode → mp4-muxer |

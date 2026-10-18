@@ -11,7 +11,6 @@ import {
 } from "../actions.js";
 import { keyTimes, shiftKeyframes } from "../keyframes.js";
 import { decodeMedia } from "../media-audio.js";
-import { frameFor, onThumbs } from "../thumbs.js";
 import { html, fmt } from "./kit.js";
 
 const additiveKey = (e) => e.shiftKey || e.ctrlKey || e.metaKey;
@@ -208,55 +207,6 @@ function Wave({ media, item, width, height }) {
   return html`<canvas ref=${ref} class="wave" />`;
 }
 
-// ---------------- filmstrip thumbnails ----------------
-
-const images = new Map(); // url -> HTMLImageElement (for picture clips)
-
-/**
- * Frames of a video clip across its width, like CapCut: one tile per clip-height of width. Zooming in
- * shows frames closer together; zooming out spreads them. Only tiles inside the visible area are drawn.
- */
-function Filmstrip({ media, item, zoom, left, width, height, scrollX, viewW }) {
-  const ref = useRef();
-  const [, bump] = useState(0);
-  useEffect(() => onThumbs(() => bump((n) => n + 1)), []);
-  const aspect = media?.w && media?.h ? media.w / media.h : 16 / 9;
-  const tileW = Math.max(18, height * aspect);
-  const visA = Math.max(0, scrollX - left - tileW), visB = Math.min(width, scrollX + viewW - left + tileW);
-  const first = Math.max(0, Math.floor(visA / tileW)), last = Math.ceil(visB / tileW);
-  const x0 = first * tileW;
-  const w = Math.max(0, Math.min(width - x0, (last - first) * tileW));
-  useLayoutEffect(() => {
-    const c = ref.current;
-    if (!c || !media || w <= 0) return;
-    const cw = Math.max(1, Math.round(w)), ch = Math.max(1, Math.round(height));
-    if (c.width !== cw) c.width = cw;
-    if (c.height !== ch) c.height = ch;
-    const x = c.getContext("2d");
-    x.clearRect(0, 0, cw, ch);
-    let img = null;
-    if (media.kind === "image") {
-      img = images.get(media.url);
-      if (!img) { img = new Image(); img.onload = () => bump((n) => n + 1); img.src = media.url; images.set(media.url, img); }
-      if (!img.complete) return;
-    }
-    const speed = clipSpeed(item);
-    for (let i = first; i < last; i++) {
-      const tl = ((i + 0.5) * tileW) / zoom; // timeline seconds into the clip at the tile's centre
-      const src = Math.min(Math.max(0, (item.in || 0) + tl * speed), Math.max(0, (media.duration || 0) - 0.05));
-      const f = img || frameFor(media, src);
-      if (!f) continue;
-      const fw = f.width || f.naturalWidth, fh = f.height || f.naturalHeight;
-      // Cover-fit the frame into the tile.
-      const k = Math.max(tileW / fw, ch / fh);
-      const sw = tileW / k, sh = ch / k;
-      x.drawImage(f, (fw - sw) / 2, (fh - sh) / 2, sw, sh, Math.round((i - first) * tileW), 0, Math.ceil(tileW), ch);
-    }
-  });
-  if (!media || media.kind === "audio" || w <= 0) return null;
-  return html`<canvas ref=${ref} class="film" style=${{ left: x0, width: w, height }} />`;
-}
-
 // ---------------- the timeline ----------------
 
 export function Timeline() {
@@ -273,12 +223,7 @@ export function Timeline() {
   const [marquee, setMarquee] = useState(null);
   const [ghost, setGhost] = useState(null); // floating clip while dragging between tracks
   const [viewW, setViewW] = useState(1200);
-  const [scrollX, setScrollX] = useState(0);
-  const scrollRaf = useRef(0);
-  const onScroll = () => {
-    if (scrollRaf.current) return;
-    scrollRaf.current = requestAnimationFrame(() => { scrollRaf.current = 0; setScrollX(scroller.current?.scrollLeft || 0); });
-  };
+
   useEffect(() => {
     const ro = new ResizeObserver(() => setViewW(scroller.current?.clientWidth || 1200));
     ro.observe(scroller.current);
@@ -640,7 +585,7 @@ export function Timeline() {
         value=${Math.round((1000 * Math.log(zoom / ZOOM_MIN)) / Math.log(ZOOM_MAX / ZOOM_MIN))}
         onChange=${(e) => setState({ zoom: clampZoom(ZOOM_MIN * Math.pow(ZOOM_MAX / ZOOM_MIN, +e.target.value / 1000)) })} />
     </div>
-    <div class=${"tl-scroll" + (tool ? " tool-" + tool : "")} ref=${scroller} onScroll=${onScroll}>
+    <div class=${"tl-scroll" + (tool ? " tool-" + tool : "")} ref=${scroller}>
       <div class="tl-inner" ref=${inner} style=${{ width: LABEL + total * zoom }} onPointerDownCapture=${onToolPointerDown} onPointerDown=${onTracksPointerDown}
         onDragOver=${onDragOver} onDragLeave=${(e) => { if (!inner.current.contains(e.relatedTarget)) setGhost(null); }} onDrop=${onDrop}
         onAuxClick=${(e) => e.button === 1 && e.preventDefault()}>
@@ -660,9 +605,7 @@ export function Timeline() {
 
         ${overlayTracks.map((tr) => html`<div class="track lane-overlay" data-lane="overlay" data-track=${tr} key=${"o" + tr}>
           <div class="track-label">Layer ${tr + 1}</div>
-          ${project.overlays.filter((x) => (x.track ?? 0) === tr).map((x) => laneItem("overlay", x, "overlay", project.media[x.mediaId]?.name, [
-            html`<${Filmstrip} key="film" media=${project.media[x.mediaId]} item=${x} zoom=${zoom} left=${LABEL + x.start * zoom + 2}
-              width=${Math.max(4, x.dur * zoom) - 4} height=${LANE_H.overlay - 20} scrollX=${scrollX} viewW=${viewW} />`, ...fxBadges(x)]))}
+          ${project.overlays.filter((x) => (x.track ?? 0) === tr).map((x) => laneItem("overlay", x, "overlay", project.media[x.mediaId]?.name, fxBadges(x)))}
         </div>`)}
 
         <div class="track main-track" data-lane="main">
@@ -676,8 +619,6 @@ export function Timeline() {
                   class=${"seg clip" + (isSelected("main", s.id) ? " selected" : "") + (s.mute ? " muted" : "")}
                   style=${{ left: LABEL + s.start * zoom, width: Math.max(4, s.dur * zoom) }}
                   onPointerDown=${(e) => mainDrag(e, s, media)}>
-                <${Filmstrip} media=${media} item=${s} zoom=${zoom} left=${LABEL + s.start * zoom + 2} width=${Math.max(4, s.dur * zoom) - 4}
-                  height=${LANE_H.main - 20} scrollX=${scrollX} viewW=${viewW} />
                 <div class="handle l" onPointerDown=${(e) => {
                   const orig = structuredClone(s);
                   dragGesture(e, (ev, dx) => editLive((p) => {
