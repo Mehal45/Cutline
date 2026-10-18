@@ -5,6 +5,7 @@ import {
   drawFrame, renderLock, clipSpeed, activeClips, activeOverlays, exportFrames, seekClipElement, volumeAt, textSounds, visibleSources, compoundView,
 } from "./engine.js";
 import { demux, SegmentDecoder } from "./decode.js";
+import { interpolate } from "./interp.js";
 import { buildChain, needsChain, prepareContext, loudnessGain } from "./audiofx.js";
 import { decodeMedia } from "./media-audio.js";
 import { loadCutout } from "./segment.js";
@@ -151,7 +152,22 @@ export async function supportedCodecs(width, height, fps) {
  * Makes the frame for time t available to drawFrame: decoded VideoFrames where possible,
  * otherwise an exactly-seeked <video>. Decoders of clips and layers that have ended are closed.
  */
-async function prepareFrame(project, t, decoders) {
+const interpCanvases = new Map(); // item id -> 2d context holding its interpolated picture
+
+/** Copies an interpolated picture out of the shared GPU canvas (several clips can be visible at once). */
+function keepPicture(id, src) {
+  let c = interpCanvases.get(id);
+  if (!c) { c = new OffscreenCanvas(src.width, src.height).getContext("2d"); interpCanvases.set(id, c); }
+  if (c.canvas.width !== src.width || c.canvas.height !== src.height) { c.canvas.width = src.width; c.canvas.height = src.height; }
+  c.drawImage(src, 0, 0);
+  return c.canvas;
+}
+
+/**
+ * Picks (or makes) the picture each video shows at export time t. With `smooth` = { method, blur, fps }, frames
+ * that fall between two real frames are interpolated, and `blur` (0..1 of a frame) adds motion blur.
+ */
+async function prepareFrame(project, t, decoders, smooth) {
   const visible = visibleSources(project, t);
   const live = new Set(visible.map((c) => c.item.id));
   for (const [id, dec] of decoders) {
@@ -167,7 +183,26 @@ async function prepareFrame(project, t, decoders) {
     }
     const dec = decoders.get(c.item.id);
     let frame = null;
-    if (dec) {
+    if (dec && smooth && smooth.method !== "off") {
+      try {
+        const { a, b, alpha } = await dec.pairAt(c.sourceTime);
+        frame = a;
+        if (a && b) {
+          // Blur covers `blur` of an output frame, in units of the gap between the two real frames.
+          const gap = (b.timestamp - a.timestamp) / 1e6;
+          const span = smooth.blur > 0 ? Math.min(1, (smooth.blur * clipSpeed(c.item)) / smooth.fps / gap) : 0;
+          // Only when the export has more frames than the clip (higher frame rate or slow motion).
+          const upsampling = clipSpeed(c.item) / smooth.fps < gap * 0.95;
+          if (upsampling && ((alpha > 0.02 && alpha < 0.98) || span > 0)) {
+            const pic = interpolate(a, b, alpha, { method: smooth.method, span });
+            if (pic) frame = keepPicture(c.item.id, pic);
+          }
+        }
+      } catch {
+        dec.close();
+        decoders.set(c.item.id, null);
+      }
+    } else if (dec) {
       try {
         frame = await dec.frameAt(c.sourceTime);
       } catch {
@@ -226,13 +261,14 @@ export async function exportMp4(project, onProgress, signal, opts = {}) {
   const mixPromise = audio ? mixAudio(project, 48000, 2) : null; // runs alongside the video encode
   mixPromise?.catch(() => {});
   const decoders = new Map(); // item id -> SegmentDecoder | null (null = seek fallback)
+  const smooth = opts.smooth && opts.smooth.method !== "off" ? { ...opts.smooth, fps } : null;
   renderLock.exporting = true;
   try {
     for (let i = 0; i < frames; i++) {
       if (signal?.aborted) throw new DOMException("Export cancelled", "AbortError");
       if (encodeError) throw encodeError;
       const t = i / fps;
-      await prepareFrame(project, t, decoders);
+      await prepareFrame(project, t, decoders, smooth);
       drawFrame(ctx, project, t);
       const frame = new VideoFrame(canvas, { timestamp: Math.round((i * 1e6) / fps), duration: Math.round(1e6 / fps) });
       venc.encode(frame, { keyFrame: i % (fps * 2) === 0 });
@@ -245,6 +281,7 @@ export async function exportMp4(project, onProgress, signal, opts = {}) {
     renderLock.exporting = false;
     decoders.forEach((d) => d?.close());
     exportFrames.clear();
+    interpCanvases.clear();
   }
 
   if (audio) {

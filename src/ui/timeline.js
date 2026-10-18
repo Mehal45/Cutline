@@ -12,6 +12,7 @@ import {
   detachAudio, zoomTimeline, easeSpeedAtCut, neighbour, resetSpeedCurve, toggleMute, applyTransition, setTextSound,
 } from "../actions.js";
 import { createCompound, openCompound, closeCompound, breakApart } from "../compound.js";
+import { saveElement, addElement } from "../elements.js";
 import { keyTimes, shiftKeyframes } from "../keyframes.js";
 import { decodeMedia } from "../media-audio.js";
 import { addDefaultText } from "../presets.js";
@@ -570,7 +571,7 @@ export function Timeline() {
   // Dropping from the media library (or files from the computer) onto the timeline.
   const onDragOver = (e) => {
     const types = [...e.dataTransfer.types];
-    if (!types.includes("text/x-cutline-media") && !types.includes("Files")) return;
+    if (!types.includes("text/x-cutline-media") && !types.includes("text/x-cutline-element") && !types.includes("Files")) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "copy";
     const row = rowAt(e.clientX, e.clientY);
@@ -581,6 +582,17 @@ export function Timeline() {
   };
   const onDrop = async (e) => {
     setGhost(null);
+    const elId = e.dataTransfer.getData("text/x-cutline-element");
+    if (elId) {
+      e.preventDefault();
+      const el = (getState().textPresets || []).find((x) => x.id === elId);
+      if (!el) return;
+      const t = Math.max(0, timeAt(e.clientX));
+      const row = rowAt(e.clientX, e.clientY);
+      if (row.type === "main") addElement(el, "main", { index: mainIndexAt(getState().project, t, null) });
+      else addElement(el, "overlay", { time: t, track: row.type === "overlay" ? row.track : undefined });
+      return;
+    }
     const id = e.dataTransfer.getData("text/x-cutline-media");
     // A sound dropped onto a text becomes that text's sound.
     const onText = e.target.closest?.('[data-kind="text"]');
@@ -623,6 +635,8 @@ export function Timeline() {
       ...(kind !== "text" && kind !== "effect" ? [{ label: item.mute ? "Unmute" : "Mute", icon: item.mute ? "volume-2" : "volume-x", onClick: toggleMute }] : []),
       ...(hasCurve(item) ? [{ label: "Remove speed curve", icon: "rotate-ccw", onClick: () => resetSpeedCurve(kind, item.id) }] : []),
       { label: "Delete", icon: "trash-2", onClick: deleteSelection },
+      ...((kind === "main" || kind === "overlay") && p.media[item.mediaId]?.kind !== "compound"
+        ? [{ label: "Save as element", icon: "bookmark-plus", onClick: () => saveElement(kind, item.id) }] : []),
       "-",
       { label: "Create compound clip (Alt+G)", icon: "group", onClick: createCompound },
       ...(p.media[item.mediaId]?.kind === "compound" ? [

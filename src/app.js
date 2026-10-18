@@ -20,7 +20,9 @@ import { startProxies, setProxyMode } from "./proxy.js";
 import { rootProject, createCompound } from "./compound.js";
 import { Inspector } from "./ui/inspector.js";
 import { Timeline, dragGesture } from "./ui/timeline.js";
-import { EffectsTab, FiltersTab, AudioTab, TextTab, AdjustmentTab, AudioPresetsTab, MediaKitsTab } from "./ui/library.js";
+import {
+  EffectsTab, FiltersTab, AudioTab, TextTab, AdjustmentTab, AudioPresetsTab, MediaKitsTab, ElementsTab,
+} from "./ui/library.js";
 import { EFFECT_CATEGORIES } from "./fx.js";
 import { linkWebFonts, loadProjectFonts, loadSystemFonts, loadRecentFonts } from "./ui/fonts.js";
 import { loadTextPresets, addDefaultText } from "./presets.js";
@@ -155,6 +157,7 @@ function Header({ onExport, onShortcuts }) {
 
 const LIB_TABS = [
   ["media", "Media", "film"],
+  ["elements", "Elements", "shapes"],
   ["audio", "Audio", "music"],
   ["text", "Text", "type"],
   ["effects", "Effects", "sparkles"],
@@ -166,6 +169,7 @@ const LIB_TABS = [
 
 const SUB_NAV = {
   media: [["library", "Library"], ["kits", "My kits"]],
+  elements: [["mine", "My elements"]],
   audio: [["music", "Music & sounds"], ["tts", "Text to speech"], ["mine", "My presets"]],
   text: [["mine", "My presets"], ["add", "Add text"], ["presets", "Text presets"], ["captions", "Auto captions"]],
   effects: EFFECT_CATEGORIES.map((c, i) => [String(i), c]),
@@ -193,6 +197,7 @@ function LeftPanel() {
       </div>
       <div class="libcontent">
         ${tab === "media" && (sub === "kits" ? html`<${MediaKitsTab} />` : html`<${MediaTab} />`)}
+        ${tab === "elements" && html`<${ElementsTab} />`}
         ${tab === "audio" && (sub === "mine" ? html`<${AudioPresetsTab} />` : html`<${AudioTab} part=${sub} />`)}
         ${tab === "text" && (sub === "captions" ? html`<${CaptionsForm} />` : html`<${TextTab} part=${sub} />`)}
         ${tab === "effects" && html`<${EffectsTab} cat=${+sub} />`}
@@ -604,6 +609,8 @@ function ExportDialog({ onClose }) {
   const [codec, setCodec] = useState("avc");
   const [quality, setQuality] = useState("high");
   const [customKbps, setCustomKbps] = useState(40000);
+  const [smooth, setSmooth] = useState(() => { try { return localStorage.getItem("cutline.smoothMotion") || "flow"; } catch { return "flow"; } });
+  const [blur, setBlur] = useState(() => { try { return +(localStorage.getItem("cutline.motionBlur") ?? 0.25); } catch { return 0.25; } });
   const [support, setSupport] = useState(null);
   const abort = useRef(null);
   const size = sizeFor(p, res);
@@ -616,7 +623,7 @@ function ExportDialog({ onClose }) {
     const started = performance.now();
     try {
       await loadProjectFonts(getState().project);
-      const blob = await exportMp4(rootProject(), setProgress, abort.current.signal, { ...size, fps, codec, quality, customKbps });
+      const blob = await exportMp4(rootProject(), setProgress, abort.current.signal, { ...size, fps, codec, quality, customKbps, smooth: { method: smooth, blur } });
       setUrl(URL.createObjectURL(blob));
       setPhase(`in ${((performance.now() - started) / 1000).toFixed(1)}s · ${(blob.size / 1e6).toFixed(1)} MB`);
     } catch (err) {
@@ -638,7 +645,23 @@ function ExportDialog({ onClose }) {
       <//>
       <${Field} label="Frame rate">
         <select value=${fps} disabled=${busy} onChange=${(e) => setFps(+e.target.value)}>
-          ${[24, 25, 30, 50, 60].map((f) => html`<option value=${f}>${f} fps</option>`)}
+          ${[24, 25, 30, 50, 60, 90, 120].map((f) => html`<option value=${f}>${f} fps${f > 60 ? " (smooth motion)" : ""}</option>`)}
+        </select>
+      <//>
+      <${Field} label="Smooth motion">
+        <select value=${smooth} disabled=${busy} title="Makes in-between frames when the export has more frames than your clips (e.g. 60 fps recordings at 90 or 120 fps) and for slow motion"
+          onChange=${(e) => { setSmooth(e.target.value); try { localStorage.setItem("cutline.smoothMotion", e.target.value); } catch {} }}>
+          <option value="flow">Motion interpolation (best)</option>
+          <option value="blend">Frame blending (fast)</option>
+          <option value="off">Off (repeat frames)</option>
+        </select>
+      <//>
+      <${Field} label="Motion blur">
+        <select value=${blur} disabled=${busy || smooth === "off"} title="A little blur along the motion, like a real camera shutter"
+          onChange=${(e) => { setBlur(+e.target.value); try { localStorage.setItem("cutline.motionBlur", e.target.value); } catch {} }}>
+          <option value="0">None</option>
+          <option value="0.25">Light (minimal)</option>
+          <option value="0.5">Medium (film look)</option>
         </select>
       <//>
       <${Field} label="Format">

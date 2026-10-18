@@ -5,6 +5,7 @@ import { EFFECTS, EFFECT_CATEGORIES, FILTERS, fxThumbnail } from "../fx.js";
 import { applyEffect, applyFilter, addAdjustmentLayer, importFiles, addText, toast } from "../actions.js";
 import { html, Field, db } from "./kit.js";
 import { loadFont } from "./fonts.js";
+import { addElement } from "../elements.js";
 import { TTS_VOICES, speak, ttsStatus } from "../tts.js";
 import {
   addTextFromPreset, addDefaultText, deleteTextPreset, renameTextPreset, toggleDefaultPreset, applyPresetToSelection,
@@ -349,6 +350,36 @@ export function TextTab({ part }) {
         style=${{ fontFamily: p.style.font, color: p.style.color, fontWeight: p.style.weight, fontStyle: p.style.italic ? "italic" : undefined,
           textShadow: p.style.shadow ? `${p.style.shadow.x / 4}px ${p.style.shadow.y / 4}px ${p.style.shadow.blur / 4}px ${p.style.shadow.color}` : undefined,
           background: p.style.bg || undefined }}>${p.label}</button>`)}
+    </div>
+  </div>`;
+}
+
+/** Saved elements: clips saved with all their settings, ready to drop into any video. */
+export function ElementsTab() {
+  const list = (useStore((s) => s.textPresets) || []).filter((p) => p.kind === "element");
+  const [renaming, setRenaming] = useState(null);
+  return html`<div>
+    <b class="lib-title">Elements</b>
+    <p class="muted">Right-click a clip or layer › <b>Save as element</b> (or the button in its Video tab) to keep it with all its settings, like a green screen with its key already done. Click one to add it at the playhead, or drag it onto the timeline.</p>
+    ${!list.length && html`<p class="muted">No elements yet.</p>`}
+    <div class="el-grid">
+      ${list.map((el) => html`<div key=${el.id} class="el-tile" draggable="true" title=${`${el.name}\n${el.look.media.name}\nClick to add · drag onto the timeline`}
+          onDragStart=${(e) => { e.dataTransfer.setData("text/x-cutline-element", el.id); e.dataTransfer.effectAllowed = "copy"; }}
+          onClick=${() => addElement(el)}>
+        <div class="el-thumb">${el.look.thumb ? html`<img src=${el.look.thumb} draggable="false" />` : html`<i class="ico icon-shapes" />`}
+          <span class="el-lane">${el.look.lane === "main" ? "Main" : "Layer"}</span></div>
+        ${renaming === el.id
+          ? html`<input class="el-name-in" autoFocus defaultValue=${el.name} onClick=${(e) => e.stopPropagation()}
+              onKeyDown=${(e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") setRenaming(null); }}
+              onBlur=${async (e) => { await renameTextPreset(el.id, e.target.value); setRenaming(null); }} />`
+          : html`<span class="el-name ell">${el.name}</span>`}
+        <div class="el-actions" onClick=${(e) => e.stopPropagation()}>
+          <button title="Add as a layer at the playhead" onClick=${() => addElement(el, "overlay")}><i class="ico icon-layers" /></button>
+          <button title="Add to the main track at the playhead" onClick=${() => addElement(el, "main")}><i class="ico icon-film" /></button>
+          <button title="Rename" onClick=${() => setRenaming(el.id)}><i class="ico icon-pencil" /></button>
+          <button title="Delete this element" onClick=${() => deleteTextPreset(el.id)}><i class="ico icon-trash-2" /></button>
+        </div>
+      </div>`)}
     </div>
   </div>`;
 }

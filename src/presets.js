@@ -29,6 +29,9 @@ async function write(list) {
   try { if (desktop?.savePrefs) await desktop.savePrefs({ ...(await desktop.loadPrefs()), textPresets: list }); } catch { /* not saved to file */ }
 }
 
+/** Replaces the whole saved list (used by saved elements). */
+export const savePresetList = (list) => write(list);
+
 export async function loadTextPresets() {
   setState({ textPresets: await read() });
 }

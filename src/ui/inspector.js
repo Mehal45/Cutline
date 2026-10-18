@@ -11,6 +11,7 @@ import { ADJUST, FILTERS, EFFECTS, EFFECT_CATEGORIES } from "../fx.js";
 import { VOICE_EFFECTS } from "../audiofx.js";
 import { cutoutStatus, loadCutout } from "../segment.js";
 import { uid } from "../store.js";
+import { saveElement } from "../elements.js";
 import { html, Field, Section, KSlider, Slider, CurveEditor, Icon, db, secs } from "./kit.js";
 import { FONTS, loadFont, familyCss, canListSystemFonts, loadSystemFonts, rememberFont, fontName } from "./fonts.js";
 import { SpeedCurveEditor } from "./speedcurve.js";
@@ -402,6 +403,7 @@ function VisualInspector({ kind, item, project }) {
           ${media?.kind === "video" && html`<button onClick=${() => freezeFrame()} title="Hold the frame under the playhead for 3 seconds (F)"><${Icon} n="snowflake" /> Freeze</button>`}
           ${kind === "main" && html`<button onClick=${mergeClips} title="Select neighbouring pieces of one clip, then merge"><${Icon} n="combine" /> Merge</button>`}
           <button onClick=${mirrorSelection} title="Mirror left-right"><${Icon} n="flip-horizontal-2" /> Mirror</button>
+          ${media?.kind !== "compound" && html`<button onClick=${() => saveElement(kind, item.id)} title="Save this clip with all its settings (key, cutout, effects, size…) to the Elements tab"><${Icon} n="bookmark-plus" /> Save as element</button>`}
           ${kind === "overlay" && html`<button onClick=${rippleDelete} title="Delete and close the gap (Shift+Delete)"><${Icon} n="between-horizontal-start" /> Ripple delete</button>`}
           <button class="danger" onClick=${deleteSelection}><${Icon} n="trash-2" /> Delete</button>
         </div>`}

@@ -122,7 +122,7 @@ async function build(media) {
   }
   const scale = Math.min(1, MAX_H / media.h);
   const W = Math.max(2, Math.round((media.w * scale) / 2) * 2), H = Math.max(2, Math.round((media.h * scale) / 2) * 2);
-  const demuxed = /\.(mp4|m4v|mov)$/i.test(media.name) ? await demux(media) : null;
+  const demuxed = /\.(mp4|m4v|mov|mkv|webm)$/i.test(media.name) ? await demux(media) : null;
   // Frame rate: from the MP4's sample count, else assume 60 (captures every frame of anything up to 60 fps).
   const measured = demuxed && demuxed.samples.length > 1 ? (demuxed.samples.length - 1) / ((demuxed.samples.at(-1).ts - demuxed.samples[0].ts) / 1e6 || 1) : 0;
   const fps = Math.min(120, Math.max(1, Math.round(measured || 60)));

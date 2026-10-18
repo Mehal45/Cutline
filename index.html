@@ -485,6 +485,19 @@
     .crumb-note { margin-left: auto; color: var(--muted); }
     .seg.compound { background: linear-gradient(135deg, #6b4fd6, #4a3699) !important; border-color: #a28bff; }
     .compound-thumb { background: linear-gradient(135deg, #6b4fd6, #4a3699); }
+    .el-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
+    .el-tile { display: grid; gap: 4px; cursor: pointer; }
+    .el-thumb { position: relative; aspect-ratio: 16 / 9; border-radius: 6px; overflow: hidden; border: 2px solid transparent; display: grid; place-items: center;
+      background: repeating-conic-gradient(#2c2c30 0 25%, #222226 0 50%) 0 0 / 14px 14px; }
+    .el-tile:hover .el-thumb { border-color: var(--accent); }
+    .el-thumb img { width: 100%; height: 100%; object-fit: contain; }
+    .el-thumb .ico { font-size: 26px; color: var(--muted); }
+    .el-lane { position: absolute; left: 4px; top: 4px; background: rgba(0,0,0,.6); border-radius: 4px; padding: 0 4px; font-size: 10px; }
+    .el-name { font-size: 12px; }
+    .el-name-in { font-size: 12px; padding: 2px 4px; }
+    .el-actions { display: flex; gap: 2px; }
+    .el-actions button { flex: 1; background: transparent; border: 0; padding: 3px; border-radius: 4px; color: var(--muted); }
+    .el-actions button:hover { background: var(--panel2); color: var(--text); }
   </style>
 </head>
 <body>
