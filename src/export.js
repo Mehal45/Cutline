@@ -2,7 +2,7 @@
 import { Muxer, ArrayBufferTarget } from "mp4-muxer";
 import { layoutMain, projectDuration } from "./store.js";
 import {
-  drawFrame, renderLock, clipSpeed, activeClips, activeOverlays, exportFrames, seekClipElement, volumeAt, textSounds,
+  drawFrame, renderLock, clipSpeed, activeClips, activeOverlays, exportFrames, seekClipElement, volumeAt, textSounds, visibleSources, compoundView,
 } from "./engine.js";
 import { demux, SegmentDecoder } from "./decode.js";
 import { buildChain, needsChain, prepareContext, loudnessGain } from "./audiofx.js";
@@ -12,7 +12,7 @@ import { hasKeys } from "./keyframes.js";
 import { hasCurve, sourceSpan, rateSamples } from "./speed.js";
 
 /** Every piece of timeline audio: { item, start, buf-source media } — main clips, overlay layers, audio items. */
-function audioSources(project) {
+function audioSources(project, level = 0) {
   const out = [];
   const ts = project.trackState || {};
   for (const seg of layoutMain(project)) out.push({ item: seg, start: seg.start, main: true, track: "main" });
@@ -20,7 +20,26 @@ function audioSources(project) {
   for (const a of project.audio || []) out.push({ item: a, start: a.start, track: `audio:${a.track ?? 0}` });
   for (const a of textSounds(project)) out.push({ item: a, start: a.start, track: "text" });
   // Muted items and muted tracks are left out; a hidden picture track keeps its sound (like most editors).
-  return out.filter((s) => !s.item.mute && !ts[s.track]?.muted);
+  const kept = out.filter((s) => !s.item.mute && !ts[s.track]?.muted);
+  const flat = [];
+  for (const s of kept) {
+    const media = project.media[s.item.mediaId];
+    if (media?.kind !== "compound") { flat.push(s); continue; }
+    if (level >= 6 || !media.sequence) continue;
+    // The compound clip's own sounds, cut to the part of it that's used and played at its speed and volume.
+    const c = s.item, sp = clipSpeed(c), a = c.in || 0, b = a + c.dur * sp, gain = c.audio?.volume ?? 1;
+    for (const n of audioSources(compoundView(project, media, c.id), level + 1)) {
+      const x = n.item, lo = Math.max(n.start, a), hi = Math.min(n.start + x.dur, b);
+      if (hi - lo < 0.01) continue;
+      const xs = clipSpeed(x);
+      const { speedCurve: _c, ...rest } = x;
+      flat.push({ start: s.start + (lo - a) / sp, track: s.track, item: {
+        ...rest, in: (x.in || 0) + (lo - n.start) * xs, dur: (hi - lo) / sp, speed: xs * sp,
+        audio: { ...x.audio, volume: (x.audio?.volume ?? 1) * gain },
+      } });
+    }
+  }
+  return flat;
 }
 
 /** Whether an item's volume is anything other than a constant 100%. */
@@ -133,16 +152,13 @@ export async function supportedCodecs(width, height, fps) {
  * otherwise an exactly-seeked <video>. Decoders of clips and layers that have ended are closed.
  */
 async function prepareFrame(project, t, decoders) {
-  const visible = [
-    ...activeClips(project, t).clips.map((c) => ({ item: c.seg, sourceTime: c.sourceTime })),
-    ...activeOverlays(project, t).map((o) => ({ item: o.item, sourceTime: o.sourceTime })),
-  ];
+  const visible = visibleSources(project, t);
   const live = new Set(visible.map((c) => c.item.id));
   for (const [id, dec] of decoders) {
     if (!live.has(id)) { dec?.close(); decoders.delete(id); exportFrames.delete(id); }
   }
   for (const c of visible) {
-    const media = project.media[c.item.mediaId];
+    const media = c.media;
     if (!media || media.kind === "audio") continue;
     if (media.kind !== "video") { await seekClipElement(c.item, media, 0); continue; }
     if (!decoders.has(c.item.id)) {

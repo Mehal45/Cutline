@@ -60,6 +60,17 @@ export function edit(fn) {
   setState({ project: draft, ...historyFlags() });
 }
 
+/**
+ * Swaps the undo/redo history for another one (each open compound clip has its own). Returns the old one.
+ * `next` = null starts empty.
+ */
+export function swapHistory(next) {
+  const prev = { past: past.splice(0), future: future.splice(0) };
+  if (next) { past.push(...next.past); future.push(...next.future); }
+  setState(historyFlags());
+  return prev;
+}
+
 /** Saves an undo point without changing anything (call once at the start of a drag). */
 export function checkpoint() {
   past.push(state.project);

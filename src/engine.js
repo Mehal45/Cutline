@@ -126,6 +126,58 @@ export function allVideoElements() {
 /** The media element already created for an item, if any. */
 export const existingElement = (id) => elements.get(id);
 
+// ---------- compound clips ----------
+// A compound clip's media ({ kind: "compound", sequence: { main, texts, overlays, audio, effects } }) is a
+// timeline of its own. Each use of it on the timeline gets a "view": that timeline with item ids prefixed by
+// the clip's id, so two copies of one compound clip keep separate players.
+
+const MAX_DEPTH = 6;
+const views = new Map(); // instance id -> { seq, view }
+
+export function compoundView(project, media, instanceId) {
+  const seq = media.sequence;
+  let c = views.get(instanceId);
+  if (!c || c.seq !== seq) {
+    const pre = (x) => ({ ...x, id: `${instanceId}>${x.id}` });
+    c = { seq, view: {
+      main: (seq.main || []).map(pre), texts: (seq.texts || []).map(pre), overlays: (seq.overlays || []).map(pre),
+      audio: (seq.audio || []).map(pre), effects: (seq.effects || []).map(pre), ...(seq.trackState ? { trackState: seq.trackState } : {}),
+    } };
+    views.set(instanceId, c);
+  }
+  Object.assign(c.view, { media: project.media, width: project.width, height: project.height, fps: project.fps });
+  return c.view;
+}
+
+const compoundCanvases = new Map(); // instance id -> 2d context
+let depth = 0;
+
+/** Draws a compound clip's own timeline at its source time; the result is used like a video frame. */
+function renderCompound(project, item, media, sourceTime, W, H) {
+  if (depth >= MAX_DEPTH || !media.sequence) return null;
+  let c = compoundCanvases.get(item.id);
+  if (!c) { c = new OffscreenCanvas(W, H).getContext("2d"); compoundCanvases.set(item.id, c); }
+  if (c.canvas.width !== W || c.canvas.height !== H) { c.canvas.width = W; c.canvas.height = H; }
+  depth++;
+  try { drawFrame(c, compoundView(project, media, item.id), sourceTime, { nested: true }); } finally { depth--; }
+  return c.canvas;
+}
+
+/** Every picture source visible at t, compound clips opened up (for the exporter's decoders). */
+export function visibleSources(project, t, level = 0) {
+  const out = [];
+  const add = (item, sourceTime) => {
+    const media = project.media[item.mediaId];
+    if (!media) return;
+    if (media.kind === "compound") {
+      if (level < MAX_DEPTH && media.sequence) out.push(...visibleSources(compoundView(project, media, item.id), sourceTime, level + 1));
+    } else out.push({ item, sourceTime, media });
+  };
+  for (const c of activeClips(project, t).clips) add(c.seg, c.sourceTime);
+  for (const o of activeOverlays(project, t)) add(o.item, o.sourceTime);
+  return out;
+}
+
 /** Which main segments are visible at t, and what source time each should show. */
 export function activeClips(project, t) {
   const segs = layoutMain(project);
@@ -198,7 +250,7 @@ export function fxSettingsAt(item, lt) {
 }
 
 /** Source frame size of a drawable. */
-const sizeOf = (el, media) => [el.displayWidth || el.videoWidth || el.naturalWidth || media.w, el.displayHeight || el.videoHeight || el.naturalHeight || media.h];
+const sizeOf = (el, media) => el.getContext ? [el.width, el.height] : [el.displayWidth || el.videoWidth || el.naturalWidth || media.w, el.displayHeight || el.videoHeight || el.naturalHeight || media.h];
 
 /**
  * Draws a main-track clip or an overlay layer at its local time `lt`: keyframed transform and opacity,
@@ -209,7 +261,9 @@ function drawVisual(ctx, project, item, lt, W, H) {
   const media = project.media[item.mediaId];
   if (!media || media.kind === "audio") return;
   // During export a decoded VideoFrame may stand in for the <video> element.
-  const el = exportFrames.get(item.id) || elementFor(item, media);
+  const el = media.kind === "compound" ? renderCompound(project, item, media, sourceAt(item, lt), W, H)
+    : exportFrames.get(item.id) || elementFor(item, media);
+  if (!el) return;
   const [sw, sh] = sizeOf(el, media);
   if (!sw || !sh) return;
   const a = animState(item.anim, lt, item.dur);
@@ -416,15 +470,19 @@ function roundRect(ctx, x, y, w, h, r) {
 }
 
 /** Draws the full composition at time t into a 2D context sized project.width x height. */
-export function drawFrame(ctx, project, t) {
+export function drawFrame(ctx, project, t, opts = {}) {
   const W = ctx.canvas.width, H = ctx.canvas.height;
-  ctx.fillStyle = "#000";
-  ctx.fillRect(0, 0, W, H);
+  ctx.clearRect(0, 0, W, H);
+  // Inside a compound clip with nothing on its main track, empty areas stay see-through.
+  if (!opts.nested || project.main.length) {
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, W, H);
+  }
   const { clips, transition } = activeClips(project, t);
   const hidden = (key) => !!project.trackState?.[key]?.hidden;
   if (hidden("main")) { /* main track hidden: nothing drawn from it */ }
   else if (transition) {
-    const A = scratch(0, W, H), B = scratch(1, W, H);
+    const A = scratch(depth * 2, W, H), B = scratch(depth * 2 + 1, W, H);
     A.clearRect(0, 0, W, H); B.clearRect(0, 0, W, H);
     A.fillStyle = B.fillStyle = "#000";
     A.fillRect(0, 0, W, H); B.fillRect(0, 0, W, H);
@@ -663,13 +721,29 @@ function renderTransition(type, a, b, p, W, H) {
  * nudged only on drift; otherwise they are seeked exactly. Resolves when frames are ready.
  */
 export function syncMedia(project, t, playing) {
-  const { clips } = activeClips(project, t);
-  const active = new Set(clips.map((c) => c.seg.id));
+  const active = new Set();
   const waits = [];
+  syncInto(project, t, playing, active, waits, { muted: false, rate: 1, vol: 1, level: 0 });
+  for (const [id, el] of elements) {
+    if (!active.has(id) && el instanceof HTMLMediaElement && !el.paused) el.pause();
+  }
+  if (playing) prerollUpcoming(project, t, active);
+  return Promise.all(waits);
+}
+
+/** Positions the players of one timeline; compound clips recurse with their speed, volume and mute. */
+function syncInto(project, t, playing, active, waits, outer) {
+  const { clips } = activeClips(project, t);
+  const nested = (item, lt, sourceTime, media, muted, frozen) => {
+    if (outer.level >= MAX_DEPTH || !media.sequence) return;
+    syncInto(compoundView(project, media, item.id), sourceTime, playing && !frozen, active, waits, {
+      muted, rate: outer.rate * rateAt(item, lt), vol: outer.vol * volumeAt(item, lt), level: outer.level + 1,
+    });
+  };
   const position = (item, lt, el, sourceTime, frozen, muted) => {
     el.muted = muted;
     if (!muted) {
-      const vol = volumeAt(item, lt);
+      const vol = volumeAt(item, lt) * outer.vol;
       const media = project.media[item.mediaId];
       const level = item.audio?.normalize ? levelFor(media) ?? 1 : 1;
       if (needsLiveRoute(item, vol) || isRouted(el)) routeLive(el, item, vol, level);
@@ -678,7 +752,7 @@ export function syncMedia(project, t, playing) {
     if (playing && !frozen) {
       // Follow the speed (curve), and catch up gently on small drift by nudging the rate instead of seeking.
       const drift = sourceTime - el.currentTime;
-      const rate = Math.max(0.0625, Math.min(16, rateAt(item, lt) + Math.max(-0.5, Math.min(0.5, drift * 2.5))));
+      const rate = Math.max(0.0625, Math.min(16, rateAt(item, lt) * outer.rate + Math.max(-0.5, Math.min(0.5, drift * 2.5))));
       if (Math.abs(el.playbackRate - rate) > 0.005) el.playbackRate = rate;
       if (Math.abs(el.currentTime - sourceTime) > 0.3 * Math.max(1, rate)) el.currentTime = sourceTime;
       if (el.paused) el.play().catch(() => {});
@@ -690,14 +764,18 @@ export function syncMedia(project, t, playing) {
     }
   };
   for (const c of clips) {
-    const el = elementFor(c.seg, project.media[c.seg.mediaId]);
+    const media = project.media[c.seg.mediaId];
+    if (!media) continue;
+    active.add(c.seg.id);
+    // Inside a transition one side is "frozen" on its first/last frame.
+    const frozen = t < c.seg.start || t >= c.seg.start + c.seg.dur;
+    const muted = outer.muted || !playing || frozen || clips.length > 1 && c !== clips[0] || !!c.seg.mute || !!project.trackState?.main?.muted;
+    if (media.kind === "compound") { nested(c.seg, c.local, c.sourceTime, media, muted, frozen); continue; }
+    const el = elementFor(c.seg, media);
     if (!(el instanceof HTMLMediaElement)) {
       if (!el.complete) waits.push(new Promise((r) => (el.onload = r)));
       continue;
     }
-    // Inside a transition one side is "frozen" on its first/last frame.
-    const frozen = t < c.seg.start || t >= c.seg.start + c.seg.dur;
-    const muted = !playing || frozen || clips.length > 1 && c !== clips[0] || !!c.seg.mute || !!project.trackState?.main?.muted;
     position(c.seg, c.local, el, c.sourceTime, frozen, muted);
   }
   for (const list of [project.overlays, project.audio, textSounds(project)]) {
@@ -705,20 +783,17 @@ export function syncMedia(project, t, playing) {
       const media = project.media[o.item.mediaId];
       if (!media) continue;
       active.add(o.item.id);
+      const lane = list === project.overlays ? "overlay" : "audio";
+      const muted = outer.muted || !playing || !!o.item.mute || !!project.trackState?.[`${lane}:${o.item.track ?? 0}`]?.muted;
+      if (media.kind === "compound") { nested(o.item, o.local, o.sourceTime, media, muted, false); continue; }
       const el = elementFor(o.item, media);
       if (!(el instanceof HTMLMediaElement)) {
         if (!el.complete) waits.push(new Promise((r) => (el.onload = r)));
         continue;
       }
-      const lane = list === project.overlays ? "overlay" : "audio";
-      position(o.item, o.local, el, o.sourceTime, false, !playing || !!o.item.mute || !!project.trackState?.[`${lane}:${o.item.track ?? 0}`]?.muted);
+      position(o.item, o.local, el, o.sourceTime, false, muted);
     }
   }
-  for (const [id, el] of elements) {
-    if (!active.has(id) && el instanceof HTMLMediaElement && !el.paused) el.pause();
-  }
-  if (playing) prerollUpcoming(project, t, active);
-  return Promise.all(waits);
 }
 
 /**
@@ -733,7 +808,7 @@ function prerollUpcoming(project, t, active) {
   for (const item of soon) {
     if (active.has(item.id)) continue;
     const media = project.media[item.mediaId];
-    if (!media || media.kind === "image") continue;
+    if (!media || media.kind === "image" || media.kind === "compound") continue;
     const el = elementFor(item, media);
     if (!(el instanceof HTMLMediaElement) || !el.paused || el.seeking) continue;
     const start = sourceAt(item, 0);
@@ -745,8 +820,10 @@ function prerollUpcoming(project, t, active) {
  * True when every visible video is showing (about) the right moment. During playback the render loop
  * holds the previous frame while a player is still seeking, instead of flashing the wrong frame.
  */
-export function framesReady(project, t) {
+export function framesReady(project, t, level = 0) {
   const check = (item, lt, sourceTime) => {
+    const media = project.media[item.mediaId];
+    if (media?.kind === "compound") return level >= MAX_DEPTH || !media.sequence || framesReady(compoundView(project, media, item.id), sourceTime, level + 1);
     const el = elements.get(item.id);
     if (!(el instanceof HTMLVideoElement)) return true;
     if (el.readyState < 2 || el.seeking) return false;

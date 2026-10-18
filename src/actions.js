@@ -193,8 +193,18 @@ export function previewRange(media) {
  * at `opts.index`), as an overlay layer, or on an audio track (at `opts.time`, default the playhead).
  * Uses the In/Out range marked in the preview, if any.
  */
+/** Whether compound media `m` contains media `id`, at any depth. */
+function compoundContains(m, id, all, depth = 0) {
+  if (m?.kind !== "compound" || depth > 8) return false;
+  return [...(m.sequence.main || []), ...(m.sequence.overlays || [])].some((x) => x.mediaId === id || compoundContains(all[x.mediaId], id, all, depth + 1));
+}
+
 export function addMediaToTimeline(media, where, opts = {}) {
   if (media.missing) return toast("That file is missing — relink it first");
+  const open = getState().compoundOpen || [];
+  if (media.kind === "compound" && open.some((id) => id === media.id || compoundContains(media, id, getState().project.media))) {
+    return toast("A compound clip can't go inside itself");
+  }
   where ??= media.kind === "audio" ? "audio" : "main";
   if (where === "main" && media.kind === "audio") where = "audio";
   if (where === "overlay" && media.kind === "audio") where = "audio";

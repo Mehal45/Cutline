@@ -4,6 +4,7 @@
 // path (desktop app) or name (browser); media Cutline made itself (freeze frames, voice-overs) is embedded.
 import { getState, setState } from "./store.js";
 import { toast } from "./actions.js";
+import { rootProject, resetCompounds } from "./compound.js";
 
 export const desktop = typeof window !== "undefined" ? window.cutlineDesktop : null;
 const EMBED_LIMIT = 40e6; // bytes
@@ -11,7 +12,8 @@ const EMBED_LIMIT = 40e6; // bytes
 let savedSnapshot = null; // the project object at the last save/open (identity check = "no changes")
 let currentPath = null;
 
-export const isDirty = () => getState().project !== savedSnapshot && hasContent(getState().project);
+// While a compound clip is open the project counts as changed (its edits are written back on save).
+export const isDirty = () => { const p = rootProject(); return p !== savedSnapshot && hasContent(p); };
 const hasContent = (p) => p.main.length || p.texts.length || p.overlays?.length || p.audio?.length || p.effects?.length;
 export const projectName = () => (currentPath ? currentPath.split(/[\\/]/).pop().replace(/\.cutline$/i, "") : "Untitled");
 
@@ -23,11 +25,12 @@ function toBase64(buf) {
 }
 
 /** Serialises the project. */
-export async function serialize(project = getState().project) {
+export async function serialize(project = rootProject()) {
   const media = {};
   for (const m of Object.values(project.media)) {
     const entry = { id: m.id, name: m.name, kind: m.kind, duration: m.duration, w: m.w, h: m.h, size: m.file?.size };
-    if (m.path) entry.path = m.path;
+    if (m.kind === "compound") entry.sequence = m.sequence;
+    else if (m.path) entry.path = m.path;
     else if (m.file && m.file.size <= EMBED_LIMIT && m.file instanceof Blob) {
       entry.data = `data:${m.file.type || "application/octet-stream"};base64,` + toBase64(await m.file.arrayBuffer());
     }
@@ -48,7 +51,9 @@ async function restoreMedia(saved) {
   const media = {};
   const missing = [];
   for (const m of Object.values(saved)) {
-    if (m.data) {
+    if (m.kind === "compound") {
+      media[m.id] = { ...m, url: "" };
+    } else if (m.data) {
       const blob = await (await fetch(m.data)).blob();
       const file = new File([blob], m.name, { type: blob.type });
       media[m.id] = { ...m, data: undefined, file, url: URL.createObjectURL(file) };
@@ -70,6 +75,7 @@ export async function loadProject(text, path = null) {
   if (data.app !== "Cutline" || !data.project) throw new Error("This isn't a Cutline project file.");
   const { media, missing } = await restoreMedia(data.project.media || {});
   const project = { overlays: [], audio: [], effects: [], ...data.project, media };
+  resetCompounds();
   setState({ project, selection: [], time: 0, playing: false, canUndo: false, canRedo: false, relink: missing.length ? missing : null });
   savedSnapshot = project;
   currentPath = path;
@@ -109,7 +115,7 @@ export async function saveProject({ saveAs = false } = {}) {
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   }
-  savedSnapshot = getState().project;
+  savedSnapshot = rootProject();
   setState({ autoSavedAt: Date.now() });
   toast("Project saved");
   return true;
@@ -135,6 +141,7 @@ export async function openProject(file) {
 export function newProject() {
   if (isDirty() && !confirm("Discard unsaved changes to the current project?")) return;
   const project = { width: 1920, height: 1080, fps: 30, media: {}, main: [], texts: [], overlays: [], audio: [], effects: [] };
+  resetCompounds();
   setState({ project, selection: [], time: 0, playing: false, canUndo: false, canRedo: false, relink: null });
   savedSnapshot = project;
   currentPath = null;
@@ -147,7 +154,7 @@ let lastAuto = null;
 export function startAutosave() {
   if (!desktop) return;
   setInterval(async () => {
-    const p = getState().project;
+    const p = rootProject();
     if (p === lastAuto || !hasContent(p) || !isDirty()) return;
     lastAuto = p;
     try { await desktop.autosave(await serialize(p)); setState({ autoSavedAt: Date.now() }); } catch { /* ignore */ }

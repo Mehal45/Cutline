@@ -19,6 +19,7 @@ A free, open-source CapCut-style video editor for Windows and Mac. No account, n
 - **Exact numbers:** every slider has a number box you can type into; volume is shown in decibels (0 dB = unchanged, −6 dB = half)
 - **Cut fast:** split, trim, ripple delete, merge, freeze frame, detach audio, speed 0.1–10×, magnetic snapping
 - **Blend modes, crop and flips** on any clip or layer
+- **Compound clips:** select clips, layers and texts and press **Alt+G** (or right-click › Create compound clip) to pack them into one clip you can trim, speed up, move and add effects to. Double-click it to edit what's inside (◂ Back returns), nest them as deep as you like, reuse them from the library, or **Break apart** to unpack
 - **Export** H.264, HEVC, AV1 or VP9 MP4 up to 4K 60 fps at any bitrate (e.g. 40,000 kbps), plus WAV audio and PNG stills
 - **Projects** save and open as `.cutline` files, with autosave and crash recovery in the desktop app
 

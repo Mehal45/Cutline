@@ -17,6 +17,7 @@ import { exportMp4, exportWav, exportFrame, supportedCodecs, VIDEO_CODECS, QUALI
 import { transcribe, wordsToCaptions, CAPTION_MODELS } from "./captions.js";
 import { html, fmt, Field, Icon, Slider, secs } from "./ui/kit.js";
 import { startProxies, setProxyMode } from "./proxy.js";
+import { rootProject, createCompound } from "./compound.js";
 import { Inspector } from "./ui/inspector.js";
 import { Timeline, dragGesture } from "./ui/timeline.js";
 import { EffectsTab, FiltersTab, AudioTab, TextTab, AdjustmentTab, AudioPresetsTab, MediaKitsTab } from "./ui/library.js";
@@ -98,7 +99,7 @@ function MainMenu({ onShortcuts, onExport }) {
   }, [open]);
   const run = (fn) => () => { setOpen(false); fn(); };
   const exportAudio = async () => {
-    try { toast("Mixing audio…"); download(await exportWav(getState().project), projectName() + ".wav"); }
+    try { toast("Mixing audio…"); download(await exportWav(rootProject()), projectName() + ".wav"); }
     catch (err) { toast(err.message); }
   };
   const snapshot = async () => {
@@ -224,11 +225,12 @@ function MediaTab() {
           title=${m.missing ? "File not found — use Menu › Open again or relink" : `${m.name}\nClick to preview · double-click to add · drag onto the timeline`}
           draggable=${!m.missing}
           onDragStart=${(e) => { e.dataTransfer.setData("text/x-cutline-media", m.id); e.dataTransfer.effectAllowed = "copy"; }}
-          onClick=${() => !m.missing && openPreview(m.id)}
+          onClick=${() => !m.missing && m.kind !== "compound" && openPreview(m.id)}
           onDoubleClick=${() => !m.missing && addMediaToTimeline(m)}>
         <div class="mthumb">
           ${m.kind === "image" ? html`<img src=${m.url} draggable="false" />`
             : m.kind === "audio" ? html`<div class="audio-thumb"><${Icon} n="audio-lines" size=${26} /></div>`
+            : m.kind === "compound" ? html`<div class="audio-thumb compound-thumb"><${Icon} n="layers" size=${26} /></div>`
             : html`<video src=${m.url ? m.url + "#t=0.5" : ""} muted preload="metadata" />`}
           <span class="mdur">${m.missing ? "missing" : m.kind === "image" ? "" : fmt(m.duration).replace(/\.\d+$/, "")}</span>
           ${proxies?.[m.id]?.state === "ready" && html`<span class="mproxy" title="Smooth preview ready">⚡</span>`}
@@ -504,6 +506,7 @@ const SHORTCUTS = [
   ["Shift + mouse wheel", "Scroll the timeline sideways"],
   ["+ / − · Ctrl+= / Ctrl+− · Ctrl+0", "Zoom timeline in / out · reset zoom"],
   ["Shift+Z", "Fit the whole project in the timeline"],
+  ["Alt+G", "Make a compound clip from the selection (double-click it to edit inside)"],
   ["Ctrl+I", "Import media (to the library)"],
   ["Click a library item", "Preview it in the viewer (Space play · I / O mark in/out · Enter add · Esc back)"],
   ["Double-click / drag a library item", "Add it to the timeline / drop it where you want it"],
@@ -613,7 +616,7 @@ function ExportDialog({ onClose }) {
     const started = performance.now();
     try {
       await loadProjectFonts(getState().project);
-      const blob = await exportMp4(getState().project, setProgress, abort.current.signal, { ...size, fps, codec, quality, customKbps });
+      const blob = await exportMp4(rootProject(), setProgress, abort.current.signal, { ...size, fps, codec, quality, customKbps });
       setUrl(URL.createObjectURL(blob));
       setPhase(`in ${((performance.now() - started) / 1000).toFixed(1)}s · ${(blob.size / 1e6).toFixed(1)} MB`);
     } catch (err) {
@@ -746,6 +749,7 @@ function useShortcuts(openShortcuts, openExport) {
         if (key === "0") return run(() => setState({ zoom: 80 }));
         return;
       }
+      if (e.altKey && key === "g") return run(createCompound);
       if (e.altKey) return;
       if (e.code === "Space") return run(togglePlay);
       if (key === "s") return run(splitAtPlayhead);

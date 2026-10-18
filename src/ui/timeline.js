@@ -11,6 +11,7 @@ import {
   addMediaToTimeline, importFiles, clampZoom, zoomToFit, ZOOM_MIN, ZOOM_MAX, toast, trimToPlayhead, mirrorSelection,
   detachAudio, zoomTimeline, easeSpeedAtCut, neighbour, resetSpeedCurve, toggleMute, applyTransition, setTextSound,
 } from "../actions.js";
+import { createCompound, openCompound, closeCompound, breakApart } from "../compound.js";
 import { keyTimes, shiftKeyframes } from "../keyframes.js";
 import { decodeMedia } from "../media-audio.js";
 import { addDefaultText } from "../presets.js";
@@ -241,6 +242,7 @@ function TrackHead({ k, label, icon, project, hide = true, mute = true }) {
 // ---------------- the timeline ----------------
 
 export function Timeline() {
+  const trail = useStore((s) => s.compoundTrail);
   const project = useStore((s) => s.project);
   const time = useStore((s) => s.time);
   const zoom = useStore((s) => s.zoom);
@@ -491,9 +493,11 @@ export function Timeline() {
       }), { scroll: scroller.current, tip: () => trimText(kind, item.id) });
     };
     return html`<div key=${item.id} data-kind=${kind} data-id=${item.id}
-        class=${`seg ${cls}` + (isSelected(kind, item.id) ? " selected" : "") + (item.mute ? " muted" : "")}
+        class=${`seg ${cls}` + (isSelected(kind, item.id) ? " selected" : "") + (item.mute ? " muted" : "") + (media?.kind === "compound" ? " compound" : "")}
         style=${{ left: LABEL + item.start * zoom, width: Math.max(4, item.dur * zoom) }}
-        onPointerDown=${onBody} onContextMenu=${(e) => clipMenu(e, kind, item)}>
+        onPointerDown=${onBody} onContextMenu=${(e) => clipMenu(e, kind, item)}
+        onDoubleClick=${() => media?.kind === "compound" && openCompound(media.id)}
+        title=${media?.kind === "compound" ? `${media.name} (compound clip): double-click to edit what's inside` : undefined}>
       ${extra}
       <div class="handle l" title="Drag to trim or extend the start" onPointerDown=${trimLeft} />
       <span class=${kind === "overlay" ? "label" : ""}>${label}</span>
@@ -581,7 +585,7 @@ export function Timeline() {
     // A sound dropped onto a text becomes that text's sound.
     const onText = e.target.closest?.('[data-kind="text"]');
     const dropped = id && getState().project.media[id];
-    if (onText && dropped && dropped.kind !== "image") {
+    if (onText && dropped && dropped.kind !== "image" && dropped.kind !== "compound") {
       e.preventDefault();
       setTextSound(id, [onText.dataset.id]);
       select([{ kind: "text", id: onText.dataset.id }]);
@@ -619,6 +623,12 @@ export function Timeline() {
       ...(kind !== "text" && kind !== "effect" ? [{ label: item.mute ? "Unmute" : "Mute", icon: item.mute ? "volume-2" : "volume-x", onClick: toggleMute }] : []),
       ...(hasCurve(item) ? [{ label: "Remove speed curve", icon: "rotate-ccw", onClick: () => resetSpeedCurve(kind, item.id) }] : []),
       { label: "Delete", icon: "trash-2", onClick: deleteSelection },
+      "-",
+      { label: "Create compound clip (Alt+G)", icon: "group", onClick: createCompound },
+      ...(p.media[item.mediaId]?.kind === "compound" ? [
+        { label: "Open compound clip", icon: "square-arrow-out-up-right", onClick: () => openCompound(item.mediaId) },
+        { label: "Break apart", icon: "ungroup", onClick: () => breakApart(kind, item.id) },
+      ] : []),
     ];
     if (next) items.push("-", { heading: "Speed into the next clip" },
       { label: "Ease into the next clip's speed", icon: "arrow-right-from-line", onClick: () => easeSpeedAtCut(kind, item.id, next.id, "out") },
@@ -654,6 +664,14 @@ export function Timeline() {
 
   return html`<section class="timeline">
     <${ResizeBar} />
+    ${trail?.length > 0 && html`<div class="tl-crumbs">
+      <button class="crumb-back" onClick=${() => closeCompound(1)} title="Close this compound clip and go back"><${Icon} n="chevron-left" /> Back</button>
+      <button class="crumb" onClick=${() => closeCompound(trail.length)}>Main timeline</button>
+      ${trail.map((name, i) => html`<span key=${i} class="crumb-sep">›</span>
+        <button class=${"crumb" + (i === trail.length - 1 ? " here" : "")} disabled=${i === trail.length - 1}
+          onClick=${() => closeCompound(trail.length - 1 - i)}><${Icon} n="layers" /> ${name}</button>`)}
+      <span class="crumb-note">Editing inside a compound clip. Changes apply everywhere it's used.</span>
+    </div>`}
     <div class="tl-toolbar">
       <span class="tgroup">
         <button class=${"ibtn" + (!tool ? " on" : "")} onClick=${() => setState({ tool: null })} title="Select (V)"><${Icon} n="mouse-pointer-2" /></button>
@@ -717,9 +735,11 @@ export function Timeline() {
             const sp = clipSpeed(s);
             return html`<${React.Fragment} key=${s.id}>
               <div data-kind="main" data-id=${s.id}
-                  class=${"seg clip" + (isSelected("main", s.id) ? " selected" : "") + (s.mute ? " muted" : "")}
+                  class=${"seg clip" + (isSelected("main", s.id) ? " selected" : "") + (s.mute ? " muted" : "") + (media?.kind === "compound" ? " compound" : "")}
                   style=${{ left: LABEL + s.start * zoom, width: Math.max(4, s.dur * zoom) }}
-                  onPointerDown=${(e) => mainDrag(e, s, media)} onContextMenu=${(e) => clipMenu(e, "main", s)}>
+                  onPointerDown=${(e) => mainDrag(e, s, media)} onContextMenu=${(e) => clipMenu(e, "main", s)}
+                  onDoubleClick=${() => media?.kind === "compound" && openCompound(media.id)}
+                  title=${media?.kind === "compound" ? `${media.name} (compound clip): double-click to edit what's inside` : undefined}>
                 <div class="handle l" onPointerDown=${(e) => {
                   const orig = structuredClone(s);
                   dragGesture(e, (ev, dx) => editLive((p) => {
@@ -731,7 +751,7 @@ export function Timeline() {
                     if (x.keyframes) shiftKeyframes(x, -cut, x.dur);
                   }), { scroll: scroller.current, tip: () => trimText("main", s.id) });
                 }} title="Drag to trim or extend the start" />
-                <span class="label">${media?.name}</span>
+                <span class="label">${media?.kind === "compound" && html`<${Icon} n="layers" /> `}${media?.name}</span>
                 ${hasCurve(s) ? html`<b class="speed-badge" title="Speed curve">〰 curve</b>` : sp !== 1 && html`<b class="speed-badge">${+sp.toFixed(2)}×</b>`}
                 ${fxBadges(s)}
                 ${keyMarks(s)}

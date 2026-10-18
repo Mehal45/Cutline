@@ -476,6 +476,15 @@
     .proxybtn em { font-style: normal; font-size: 10px; margin-left: 2px; }
     .mproxy { position: absolute; left: 4px; top: 4px; background: rgba(0,0,0,.6); color: #ffd84d; border-radius: 4px; padding: 0 4px; font-size: 11px; }
     .mproxy.busy { color: var(--text); }
+    .tl-crumbs { display: flex; align-items: center; gap: 6px; padding: 4px 10px; background: #2a2340; border-bottom: 1px solid var(--line); font-size: 12px; }
+    .tl-crumbs button { background: transparent; border: 0; padding: 3px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; }
+    .tl-crumbs button:hover:not(:disabled) { background: rgba(255,255,255,.08); }
+    .tl-crumbs .crumb-back { background: var(--accent); color: #000; font-weight: 600; }
+    .tl-crumbs .crumb.here { color: var(--accent); opacity: 1; }
+    .crumb-sep { color: var(--muted); }
+    .crumb-note { margin-left: auto; color: var(--muted); }
+    .seg.compound { background: linear-gradient(135deg, #6b4fd6, #4a3699) !important; border-color: #a28bff; }
+    .compound-thumb { background: linear-gradient(135deg, #6b4fd6, #4a3699); }
   </style>
 </head>
 <body>
