@@ -14,5 +14,7 @@ contextBridge.exposeInMainWorld("cutlineDesktop", {
   autosave: (json) => ipcRenderer.invoke("cutline:autosave", json),
   recover: () => ipcRenderer.invoke("cutline:recover"),
   clearAutosave: () => ipcRenderer.invoke("cutline:clear-autosave"),
+  loadPrefs: () => ipcRenderer.invoke("cutline:prefs-load"),
+  savePrefs: (prefs) => ipcRenderer.invoke("cutline:prefs-save", prefs),
   setTitle: (name) => ipcRenderer.send("cutline:title", name),
 });

@@ -1,5 +1,5 @@
 // Right-hand inspector: properties of whatever is selected.
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import { useStore, edit, editLive, checkpoint, findItem, getState, setState } from "../store.js";
 import { clipSpeed, clipTransform, BLEND_MODES, ANIMATIONS, TRANSITIONS, itemBounds } from "../engine.js";
 import {
@@ -15,6 +15,24 @@ import { FONTS, loadFont, familyCss, canListSystemFonts, loadSystemFonts, rememb
 import { SpeedCurveEditor } from "./speedcurve.js";
 import { hasCurve } from "../speed.js";
 import { setDefaultEase, defaultEase, propAt, hasKeys, keyAt } from "../keyframes.js";
+import { saveTextPreset } from "../presets.js";
+
+/** "Save as preset": keeps this text's whole look for one-click reuse (Text tab › My presets). */
+function SavePreset({ t }) {
+  const [naming, setNaming] = useState(false);
+  const nameRef = useRef();
+  const presets = useStore((s) => s.textPresets) || [];
+  if (!naming) return html`<button class="wide save-preset" onClick=${() => setNaming(true)} title="Save font, size, colour, shadow, position, animation and length">
+    <i class="ico icon-bookmark-plus" /> Save as preset</button>`;
+  const save = (name) => { saveTextPreset(getState().project.texts.find((x) => x.id === t.id) || t, name); setNaming(false); };
+  return html`<div class="preset-name">
+    <input ref=${nameRef} autoFocus placeholder="Preset name, e.g. Minecraft action" list="preset-names"
+      onKeyDown=${(e) => { if (e.key === "Enter") save(e.target.value); if (e.key === "Escape") setNaming(false); }} />
+    <datalist id="preset-names">${presets.map((p) => html`<option value=${p.name} />`)}</datalist>
+    <button class="primary" onClick=${() => save(nameRef.current.value)}>Save</button>
+    <button onClick=${() => setNaming(false)}>Cancel</button>
+  </div>`;
+}
 
 const pct = (v) => `${Math.round(v * 100)}%`;
 const deg = (v) => `${Math.round(v)}°`;
@@ -505,6 +523,7 @@ function TextInspector({ t }) {
   </div>`;
   return html`<${Shell} tabs=${[["text", t.caption ? "Caption" : "Text"], ["style", "Style"], ["animate", "Animation"]]} tab=${tab} setTab=${setTab}>
     ${linkBox}
+    <${SavePreset} t=${t} />
     ${tab === "text" && html`
       <textarea rows="3" value=${t.text} onChange=${(e) => set((x) => { x.text = e.target.value; delete x.words; })} />
       ${t.caption && t.words && html`<p class="muted">Editing the text removes word-by-word highlighting for this caption.</p>`}

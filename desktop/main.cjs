@@ -97,6 +97,12 @@ ipcMain.handle("cutline:recover", async () => {
   try { return await fs.promises.readFile(autosavePath(), "utf8"); } catch { return null; }
 });
 ipcMain.handle("cutline:clear-autosave", () => fs.promises.rm(autosavePath(), { force: true }));
+// Small settings file (text presets …) that survives app updates.
+const prefsPath = () => path.join(app.getPath("userData"), "prefs.json");
+ipcMain.handle("cutline:prefs-load", async () => {
+  try { return JSON.parse(await fs.promises.readFile(prefsPath(), "utf8")); } catch { return {}; }
+});
+ipcMain.handle("cutline:prefs-save", (_e, prefs) => fs.promises.writeFile(prefsPath(), JSON.stringify(prefs ?? {}, null, 1), "utf8"));
 ipcMain.on("cutline:title", (e, name) => BrowserWindow.fromWebContents(e.sender)?.setTitle(`${name} — Cutline`));
 
 // ---------------- window ----------------

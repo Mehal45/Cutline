@@ -8,6 +8,7 @@ A free, open-source CapCut-style video editor for Windows and Mac. No account, n
 - **Background removal** for people, plus a **chroma key** (green screen)
 - **Auto-captions** (Whisper) and **text-to-speech** with 16 natural voices (Kokoro), both on-device
 - **Voice cleanup** (reduce noise, enhance voice, level loudness) and **13 voice effects** (chipmunk, robot, telephone…)
+- **My text presets:** save a text's whole look (font, size, colour, shadow, position, animation, length) and add it again in one click, or make it the default for **T** / Add text
 - **Titles:** 32 built-in fonts plus every font installed on your computer, outline, shadow, background plate, letter spacing and 18 presets
 - **Speed curves:** smooth speed ramps (e.g. normal → fast → normal) with presets and an editable curve, plus one-click smooth (ease in & out) motion for keyframes
 - **Preview quality** Full / ½ / ¼ for smooth playback on slower computers (export is always full quality)

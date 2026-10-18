@@ -6,6 +6,7 @@ import { applyEffect, applyFilter, addAdjustmentLayer, importFiles, addText, toa
 import { html, Field } from "./kit.js";
 import { loadFont } from "./fonts.js";
 import { TTS_VOICES, speak, ttsStatus } from "../tts.js";
+import { addTextFromPreset, addDefaultText, deleteTextPreset, renameTextPreset, toggleDefaultPreset, applyPresetToSelection } from "../presets.js";
 
 // ---------------- previews ----------------
 
@@ -166,13 +167,52 @@ export const TEXT_PRESETS = [
   { label: "हिंदी शीर्षक", style: { size: 100, weight: 800, font: "'Noto Sans', 'Noto Sans Devanagari', sans-serif", strokeWidth: 8 } },
 ];
 
+/** Saved text presets: click to add a ready-styled text at the playhead. */
+function MyPresets() {
+  const presets = useStore((s) => s.textPresets) || [];
+  const textSelected = useStore((s) => s.selection.some((x) => x.kind === "text"));
+  const [renaming, setRenaming] = useState(null);
+  useEffect(() => { presets.forEach((p) => p.look.style?.font && loadFont(p.look.style.font, p.look.style.weight, p.look.style.italic)); }, [presets.length]);
+  if (!presets.length) return html`<div>
+    <b class="lib-title">My presets</b>
+    <p class="muted">Style a text the way you always use it (font, size, colour, shadow, position, animation and length),
+      then select it and press <b>Save as preset</b> on the right. It will appear here: one click adds a new text exactly like it at the playhead.</p>
+  </div>`;
+  const css = (st) => ({ fontFamily: st.font, color: st.color, fontWeight: st.weight, fontStyle: st.italic ? "italic" : undefined,
+    textTransform: st.uppercase ? "uppercase" : undefined, background: st.bg || undefined,
+    WebkitTextStroke: st.strokeWidth > 0 ? `${Math.min(2, st.strokeWidth / 4)}px ${st.stroke}` : undefined,
+    textShadow: st.shadow ? `${(st.shadow.x ?? 4) / 4}px ${(st.shadow.y ?? 4) / 4}px ${(st.shadow.blur ?? 8) / 4}px ${st.shadow.color}` : undefined });
+  return html`<div>
+    <b class="lib-title">My presets</b>
+    <p class="muted">Click to add at the playhead. ★ = used by “Add text” and the T key.</p>
+    <div class="ptiles">
+      ${presets.map((p) => html`<div key=${p.id} class=${"ptile" + (p.isDefault ? " def" : "")}>
+        <button class="ptile-main" onClick=${() => addTextFromPreset(p)} title=${`Add “${p.name}” at the playhead`}>
+          <span class="ptile-sample" style=${css(p.look.style || {})}>${p.sample || "Your text"}</span>
+        </button>
+        ${renaming === p.id
+          ? html`<input class="ptile-name" autoFocus defaultValue=${p.name} onBlur=${(e) => { renameTextPreset(p.id, e.target.value); setRenaming(null); }}
+              onKeyDown=${(e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") setRenaming(null); }} />`
+          : html`<span class="ptile-name ell" onDoubleClick=${() => setRenaming(p.id)} title="Double-click to rename">${p.name}</span>`}
+        <span class="ptile-btns">
+          <button class=${p.isDefault ? "on" : ""} title=${p.isDefault ? "Stop using for Add text" : "Use for Add text and the T key"} onClick=${() => toggleDefaultPreset(p.id)}><i class=${"ico icon-star"} /></button>
+          ${textSelected && html`<button title="Give the selected texts this look" onClick=${() => applyPresetToSelection(p)}><i class="ico icon-paintbrush" /></button>`}
+          <button title="Rename" onClick=${() => setRenaming(p.id)}><i class="ico icon-pencil" /></button>
+          <button title="Delete preset" onClick=${() => { if (confirm(`Delete the preset “${p.name}”?`)) deleteTextPreset(p.id); }}><i class="ico icon-trash-2" /></button>
+        </span>
+      </div>`)}
+    </div>
+  </div>`;
+}
+
 export function TextTab({ part }) {
   useEffect(() => { TEXT_PRESETS.forEach((p) => p.style.font && loadFont(p.style.font, p.style.weight, p.style.italic)); }, []);
+  if (part === "mine") return html`<${MyPresets} />`;
   if (part === "add") return html`<div class="tiles">
     <button class="tile" onClick=${() => addText()} title="Add text at the playhead">Default text</button>
   </div>`;
   return html`<div>
-    ${!part && html`<button class="primary wide" onClick=${() => addText()}>+ Add text</button>`}
+    ${!part && html`<button class="primary wide" onClick=${() => addDefaultText()}>+ Add text</button>`}
     <b class="lib-title">Text presets</b>
     <div class="grid2">
       ${TEXT_PRESETS.map((p) => html`<button key=${p.label} class="preset" onClick=${() => addText({ ...p, text: p.label })}

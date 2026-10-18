@@ -13,6 +13,7 @@ import {
 } from "../actions.js";
 import { keyTimes, shiftKeyframes } from "../keyframes.js";
 import { decodeMedia } from "../media-audio.js";
+import { addDefaultText } from "../presets.js";
 import { html, fmt, Icon } from "./kit.js";
 
 const additiveKey = (e) => e.shiftKey || e.ctrlKey || e.metaKey;
@@ -629,7 +630,7 @@ export function Timeline() {
       <button class="ibtn" onClick=${mirrorSelection} title="Mirror"><${Icon} n="flip-horizontal-2" /></button>
       <button class="ibtn" onClick=${duplicateSelection} title="Duplicate (Ctrl+D)"><${Icon} n="copy" /></button>
       <button class="ibtn" onClick=${detachAudio} title="Detach audio to its own track"><${Icon} n="audio-lines" /></button>
-      <button class="ibtn" onClick=${() => addText()} title="Add text"><${Icon} n="type" /></button>
+      <button class="ibtn" onClick=${() => addDefaultText()} title="Add text (T) — uses your ★ default preset if set"><${Icon} n="type" /></button>
       <span class="spacer"></span>
       <button class=${"ibtn" + (snap ? " on" : "")} onClick=${() => setState({ snap: !snap })} title="Magnetic snapping (N)"><${Icon} n="magnet" /></button>
       <span class="sep"></span>

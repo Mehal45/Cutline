@@ -21,6 +21,7 @@ import { Timeline, dragGesture } from "./ui/timeline.js";
 import { EffectsTab, FiltersTab, AudioTab, TextTab, AdjustmentTab } from "./ui/library.js";
 import { EFFECT_CATEGORIES } from "./fx.js";
 import { linkWebFonts, loadProjectFonts, loadSystemFonts, loadRecentFonts } from "./ui/fonts.js";
+import { loadTextPresets, addDefaultText } from "./presets.js";
 import {
   saveProject, openProject, newProject, relink, startAutosave, checkRecovery, loadProject, desktop, projectName,
 } from "./project-io.js";
@@ -147,7 +148,7 @@ const LIB_TABS = [
 const SUB_NAV = {
   media: [["library", "Library"]],
   audio: [["music", "Music & sounds"], ["tts", "Text to speech"]],
-  text: [["add", "Add text"], ["presets", "Text presets"], ["captions", "Auto captions"]],
+  text: [["mine", "My presets"], ["add", "Add text"], ["presets", "Text presets"], ["captions", "Auto captions"]],
   effects: EFFECT_CATEGORIES.map((c, i) => [String(i), c]),
   transitions: [["all", "Transitions"]],
   captions: [["auto", "Auto captions"]],
@@ -489,6 +490,7 @@ const SHORTCUTS = [
   ["Ctrl+W", "Close project (start a new one)"],
   ["Ctrl+Q", "Quit (desktop app)"],
   ["Q / W", "Delete the part of the clip before / after the playhead"],
+  ["T", "Add text (uses your ★ default text preset, if you set one)"],
   ["Right-click ◇", "Remove all keyframes of that property"],
   ["Shift/Ctrl + click", "Add to selection"],
   ["Drag empty timeline", "Box-select"],
@@ -730,6 +732,7 @@ function useShortcuts(openShortcuts, openExport) {
       if (key === "b") return run(() => { const on = getState().tool !== "razor"; setState({ tool: on ? "razor" : null }); toast(on ? "Razor: click a clip to cut it (B to exit)" : "Razor off"); });
       if (key === "h") return run(() => { const on = getState().tool !== "hand"; setState({ tool: on ? "hand" : null }); toast(on ? "Hand: drag the timeline to pan (H to exit)" : "Hand off"); });
       if (key === "m") return run(toggleMute);
+      if (key === "t") return run(addDefaultText);
       if (key === "g") return run(() => setState({ axis: !getState().axis }));
       if (key === "f") return run(() => freezeFrame());
       if (key === "q") return run(() => trimToPlayhead("left"));
@@ -760,6 +763,7 @@ function App() {
   useEffect(() => {
     linkWebFonts();
     loadRecentFonts();
+    loadTextPresets();
     startAutosave();
     if (desktop) loadSystemFonts(); // the desktop app can list installed fonts without asking
     // Ctrl + wheel belongs to the timeline; never zoom the whole page.

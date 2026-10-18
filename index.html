@@ -429,6 +429,22 @@
     .main-track .diamond { top: 2px; width: 18px; height: 18px; font-size: 9px; z-index: 4; }
     .trimtip { position: fixed; z-index: 50; pointer-events: none; background: #000d; color: #fff; border: 1px solid var(--accent);
       border-radius: 5px; padding: 3px 8px; font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    /* text presets */
+    .save-preset { display: flex; gap: 6px; justify-content: center; align-items: center; margin: 0 0 8px; }
+    .preset-name { display: flex; gap: 6px; margin: 0 0 8px; }
+    .preset-name input { flex: 1; min-width: 0; }
+    .ptiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; }
+    .ptile { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; display: grid; }
+    .ptile.def { border-color: #ffd400; }
+    .ptile:hover { border-color: var(--accent); }
+    .ptile-main { background: #111; border: 0; border-radius: 0; height: 70px; padding: 6px; display: grid; place-items: center; overflow: hidden; }
+    .ptile-sample { font-size: 18px; line-height: 1.1; padding: 2px 6px; border-radius: 4px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ptile-name { padding: 5px 8px 0; font-size: 12px; }
+    input.ptile-name { margin: 4px 6px 0; padding: 2px 6px; }
+    .ptile-btns { display: flex; gap: 0; padding: 2px 4px 4px; }
+    .ptile-btns button { background: transparent; border: 0; padding: 3px 5px; color: var(--muted); }
+    .ptile-btns button:hover { color: var(--text); }
+    .ptile-btns button.on { color: #ffd400; }
   </style>
 </head>
 <body>
