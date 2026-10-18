@@ -2,19 +2,63 @@
 // Each export segment gets its own decoder that only moves forward in time, so every frame
 // is decoded once instead of seeking a <video> element per frame.
 import { createFile, DataStream } from "mp4box";
+import { byteSource, indexMatroska, mkvSamples, indexMp4, mp4Samples, loadData, dropData } from "./bigfile.js";
 
 const demuxCache = new Map(); // mediaId -> Promise<{config, samples} | null>
 
 /** Demuxes the first video track of a media file. Resolves to null if unsupported. */
 export function demux(media) {
-  if (!demuxCache.has(media.id)) demuxCache.set(media.id, demuxFile(media.file).catch(() => null));
+  if (!demuxCache.has(media.id)) demuxCache.set(media.id, demuxMedia(media).catch((e) => { console.warn("demux", media.name, e); return null; }));
   return demuxCache.get(media.id);
 }
 
-const MAX_DEMUX_BYTES = 1.8e9; // bigger files use the seek path (they wouldn't fit in memory at once)
+/** Files bigger than this are indexed and read piece by piece instead of loaded whole. */
+const lazyBytes = () => globalThis.CUTLINE_LAZY_BYTES ?? 512e6;
+
+async function demuxMedia(media) {
+  const src = await byteSource(media);
+  if (src.size > lazyBytes()) return demuxLazy(src);
+  return demuxFile(media.file);
+}
+
+/** Big file: an index of where every frame is; SegmentDecoder reads frames from disk as it goes. */
+async function demuxLazy(src) {
+  const head = await src.read(0, 4);
+  let config = null, samples = [];
+  if (head[0] === 0x1a && head[1] === 0x45 && head[2] === 0xdf && head[3] === 0xa3) {
+    const index = await indexMatroska(src);
+    const v = index.tracks.find((t) => t.type === 1);
+    const codec = v && codecString(v.codec, v.priv);
+    if (!codec) return null;
+    config = { codec, codedWidth: v.width, codedHeight: v.height, ...(v.priv && /AVC|HEVC|AV1/.test(v.codec) ? { description: v.priv } : {}) };
+    samples = mkvSamples(index, v);
+  } else {
+    const index = await indexMp4(src);
+    const track = index?.info.videoTracks[0];
+    if (!track) return null;
+    config = {
+      codec: track.codec.startsWith("vp08") ? "vp8" : track.codec,
+      codedWidth: track.video.width, codedHeight: track.video.height,
+      description: codecDescription(index.mp4.getTrackById(track.id)),
+    };
+    samples = mp4Samples(index, track.id);
+  }
+  if (!samples.length) return null;
+  const support = await VideoDecoder.isConfigSupported(config).catch(() => ({ supported: false }));
+  if (!support.supported) return null;
+  return { config, samples, src, lazy: true };
+}
+
+/** Makes sure samples[from..to) have their bytes (big files read ahead ~120 frames at a time). */
+export async function ensureData(demuxed, from, to) {
+  if (!demuxed.lazy) return;
+  for (let k = from; k < to; k++) {
+    if (!demuxed.samples[k].data) { await loadData(demuxed.src, demuxed.samples, k, Math.min(demuxed.samples.length, Math.max(to, k + 120))); return; }
+  }
+}
+export const releaseData = (demuxed, from, to) => demuxed.lazy && dropData(demuxed.samples, from, to);
 
 async function demuxFile(file) {
-  if (file.size > MAX_DEMUX_BYTES) return null;
   const buf = await file.arrayBuffer();
   const head = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
   if (head[0] === 0x1a && head[1] === 0x45 && head[2] === 0xdf && head[3] === 0xa3) return demuxMatroska(buf);
@@ -75,6 +119,7 @@ function codecDescription(trak) {
 /** Forward-only frame reader for one segment, starting near `startTime` (seconds). */
 export class SegmentDecoder {
   constructor(demuxed, startTime) {
+    this.demuxed = demuxed;
     this.samples = demuxed.samples;
     this.queue = [];
     this.current = null;
@@ -110,11 +155,14 @@ export class SegmentDecoder {
     });
   }
 
-  feed(n = 8) {
-    for (let i = 0; i < n && this.next < this.samples.length; i++, this.next++) {
-      const s = this.samples[this.next];
+  async feed(n = 8) {
+    const from = this.next, to = Math.min(this.samples.length, from + n);
+    await ensureData(this.demuxed, from, to);
+    for (let i = from; i < to; i++, this.next++) {
+      const s = this.samples[i];
       this.decoder.decode(new EncodedVideoChunk({ type: s.key ? "key" : "delta", timestamp: s.ts, duration: s.dur, data: s.data }));
     }
+    releaseData(this.demuxed, from, to);
   }
 
   /** Returns the frame to show at source time t (seconds). The frame stays owned by the decoder. */
@@ -130,7 +178,7 @@ export class SegmentDecoder {
       if (this.queue.length || this.done) return this.current ?? this.queue[0] ?? null;
       if (this.next < this.samples.length) {
         if (this.decoder.decodeQueueSize > 12) await this.waitOutput();
-        else this.feed();
+        else await this.feed();
       } else {
         this.flushing ??= this.decoder.flush().then(() => { this.done = true; this.wake(); }, (e) => { this.error = e; });
         await this.waitOutput();
@@ -147,7 +195,7 @@ export class SegmentDecoder {
     while (!this.queue.length && !this.done && !this.error) {
       if (this.next < this.samples.length) {
         if (this.decoder.decodeQueueSize > 12) await this.waitOutput();
-        else this.feed();
+        else await this.feed();
       } else {
         this.flushing ??= this.decoder.flush().then(() => { this.done = true; this.wake(); }, (e) => { this.error = e; });
         await this.waitOutput();

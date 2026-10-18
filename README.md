@@ -21,6 +21,7 @@ A free, open-source CapCut-style video editor for Windows and Mac. No account, n
 - **Blend modes, crop and flips** on any clip or layer
 - **Saved elements:** right-click a clip or layer › **Save as element** to keep it with all its settings (e.g. a green screen with its key, size and position done). The **Elements** tab adds it to any project in one click or by dragging, and brings in the file if it isn't in the library yet
 - **Compound clips:** select clips, layers and texts and press **Alt+G** (or right-click › Create compound clip) to pack them into one clip you can trim, speed up, move and add effects to. Double-click it to edit what's inside (◂ Back returns), nest them as deep as you like, reuse them from the library, or **Break apart** to unpack
+- **Long recordings of any size:** multi-GB OBS recordings (MKV or MP4) are read a piece at a time, so they export quickly, with their sound, without loading the whole file into memory
 - **Smooth motion export:** export 60 fps recordings at 90 or 120 fps with GPU motion interpolation (or frame blending), plus optional light motion blur; also smooths slow motion
 - **Export** H.264, HEVC, AV1 or VP9 MP4 up to 4K 120 fps at any bitrate (e.g. 40,000 kbps), plus WAV audio and PNG stills
 - **Projects** save and open as `.cutline` files, with autosave and crash recovery in the desktop app
@@ -147,7 +148,7 @@ Press **?** in the app for the full list. On a Mac, use ⌘ where it says Ctrl.
 
 - **Internet on first use:** the editor libraries, fonts and AI models (captions, voices, background removal) load online. After the first use the models are cached.
 - **Smooth preview copies take disk space** (about 1 GB per hour of video, in the app's data folder). Turn ⚡ off to stop making them.
-- **Fast export needs MP4, MOV or MKV clips** (H.264, HEVC, VP9 or AV1, if the computer can decode the codec) under about 1.8 GB each; smooth-motion export needs this fast path too. Other files export through a much slower seek-per-frame path.
+- **Fast export needs MP4, MOV or MKV clips** (H.264, HEVC, VP9 or AV1, if the computer can decode the codec); smooth-motion export needs this fast path too. Other files export through a much slower seek-per-frame path.
 - **Sped-up audio changes pitch in the exported file.** The live preview keeps the original pitch.
 - **Volume above 100%, voice cleanup and voice effects** are heard in the preview once you've pressed play once (browsers only start audio processing after a click).
 - **Background removal** handles people only (not arbitrary objects), and text-to-speech speaks English only.

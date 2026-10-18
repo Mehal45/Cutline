@@ -5,7 +5,7 @@
 // so editing stays responsive. On the desktop app proxies are saved next to the app's settings and reused.
 import { Muxer, ArrayBufferTarget, StreamTarget } from "mp4-muxer";
 import { getState, setState } from "./store.js";
-import { demux } from "./decode.js";
+import { demux, ensureData, releaseData } from "./decode.js";
 import { decodeMedia } from "./media-audio.js";
 import { renderLock } from "./engine.js";
 
@@ -218,8 +218,11 @@ async function fromDecoder(demuxed, encodeFrom, error) {
   let i = 0;
   for (const s of demuxed.samples) {
     if (error()) throw error();
-    if (i++ % 8 === 0) { await idle(); await sleep(0); }
+    if (i % 8 === 0) { await idle(); await sleep(0); }
+    await ensureData(demuxed, i, i + 1);
     dec.decode(new EncodedVideoChunk({ type: s.key ? "key" : "delta", timestamp: s.ts, duration: s.dur, data: s.data }));
+    releaseData(demuxed, i, i + 1);
+    i++;
     while (dec.decodeQueueSize > 6) { await drain(); await new Promise((r) => { wake = r; setTimeout(r, 50); }); }
     await drain();
   }
