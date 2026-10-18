@@ -11,7 +11,7 @@ import { VOICE_EFFECTS } from "../audiofx.js";
 import { cutoutStatus, loadCutout } from "../segment.js";
 import { uid } from "../store.js";
 import { html, Field, Section, KSlider, Slider, CurveEditor } from "./kit.js";
-import { FONTS, loadFont } from "./fonts.js";
+import { FONTS, loadFont, familyCss, canListSystemFonts, loadSystemFonts } from "./fonts.js";
 
 const pct = (v) => `${Math.round(v * 100)}%`;
 const deg = (v) => `${Math.round(v)}°`;
@@ -282,6 +282,8 @@ function VisualInspector({ kind, item, project }) {
 
 /** Font, size, weight, case, alignment and spacing. `setSt(key, value, live)` decides which texts change. */
 function TextFontFields({ st, setSt }) {
+  const installed = useStore((s) => s.systemFonts);
+  const known = FONTS.some((f) => f.css === st.font) || (installed || []).some((f) => familyCss(f) === st.font);
   return html`<div>
     <div class="grid2">
       <${Field} label="Size"><input type="number" min="12" max="400" value=${st.size} onChange=${(e) => setSt("size", +e.target.value)} /><//>
@@ -293,9 +295,17 @@ function TextFontFields({ st, setSt }) {
     </div>
     <${Field} label="Font">
       <select value=${st.font} onChange=${(e) => { loadFont(e.target.value, st.weight); setSt("font", e.target.value); }}>
-        ${FONTS.map((f) => html`<option value=${f.css} style=${{ fontFamily: f.css }}>${f.name}</option>`)}
+        ${!known && html`<option value=${st.font}>${st.font.split(",")[0].replace(/'/g, "")} (not on this computer)</option>`}
+        <optgroup label="Cutline fonts">
+          ${FONTS.map((f) => html`<option value=${f.css} style=${{ fontFamily: f.css }}>${f.name}</option>`)}
+        </optgroup>
+        ${installed?.length > 0 && html`<optgroup label=${`Installed on this computer (${installed.length})`}>
+          ${installed.map((f) => html`<option value=${familyCss(f)} style=${{ fontFamily: familyCss(f) }}>${f}</option>`)}
+        </optgroup>`}
       </select>
     <//>
+    ${!installed && canListSystemFonts() && html`<button class="mini" style=${{ marginBottom: "6px" }} onClick=${loadSystemFonts}
+      title="Adds every font installed on this computer to the list">＋ Show fonts installed on this computer</button>`}
     <div class="grid3">
       <button class=${st.italic ? "chip on" : "chip"} onClick=${() => setSt("italic", !st.italic || undefined)}><i>I</i> Italic</button>
       <button class=${st.uppercase ? "chip on" : "chip"} onClick=${() => setSt("uppercase", !st.uppercase || undefined)}>AA Caps</button>

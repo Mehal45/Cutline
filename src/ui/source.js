@@ -48,6 +48,7 @@ export function SourceViewer() {
   const ref = useRef();
   const [t, setT] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [broken, setBroken] = useState(false);
   useEffect(() => {
     el = ref.current;
     if (!el) return;
@@ -57,7 +58,11 @@ export function SourceViewer() {
       const out = getState().preview?.out;
       if (out != null && !el.paused && el.currentTime >= out) { el.pause(); el.currentTime = out; }
     };
+    setBroken(false);
     const onPlay = () => setPlaying(true), onPause = () => setPlaying(false);
+    const check = () => { if (el && el.tagName === "VIDEO" && el.readyState >= 1 && !el.videoWidth) setBroken(true); };
+    el.addEventListener("error", () => setBroken(true));
+    el.addEventListener("loadedmetadata", check);
     el.addEventListener("timeupdate", tick);
     el.addEventListener("play", onPlay);
     el.addEventListener("pause", onPause);
@@ -95,6 +100,11 @@ export function SourceViewer() {
       ${media.kind === "image" ? html`<img src=${media.url} />`
         : media.kind === "audio" ? html`<div class="source-audio">♪<audio ref=${ref} src=${media.url} /></div>`
         : html`<video ref=${ref} src=${media.url} playsInline onClick=${toggleSource} />`}
+      ${(broken || media.noPicture) && html`<div class="stage-hint error">
+        <b>Can't show this video</b>
+        <span>Its format isn't supported by Cutline's video engine (common with some HEVC/H.265, ProRes or old camera files).
+          Convert it to MP4 (H.264), for example with the free HandBrake app, then import it again.</span>
+      </div>`}
     </div>
     ${dur > 0 && html`
       <div class="source-bar" onPointerDown=${scrub}>

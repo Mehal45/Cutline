@@ -38,10 +38,10 @@ export function seek(t) {
 // ---------------- feedback ----------------
 
 let toastTimer;
-export function toast(message) {
+export function toast(message, ms = 1600) {
   clearTimeout(toastTimer);
   setState({ toast: message });
-  toastTimer = setTimeout(() => setState({ toast: null }), 1600);
+  toastTimer = setTimeout(() => setState({ toast: null }), ms);
 }
 
 // ---------------- adding things ----------------
@@ -70,12 +70,26 @@ function probe(kind, url) {
     } else {
       const v = document.createElement(kind === "audio" ? "audio" : "video");
       v.preload = "metadata";
-      v.onloadedmetadata = () => resolve({ duration: v.duration, w: v.videoWidth || 0, h: v.videoHeight || 0 });
-      v.onerror = () => resolve(null);
+      let meta = null;
+      const done = (extra = {}) => resolve(meta ? { ...meta, ...extra } : null);
+      v.onloadedmetadata = () => {
+        meta = { duration: v.duration, w: v.videoWidth || 0, h: v.videoHeight || 0 };
+        if (kind !== "video") return done();
+        // A picture this engine can't decode (some HEVC, ProRes or old camera files) either has no size or
+        // fails once the first frame is decoded, so wait for that frame before trusting the file.
+        if (!v.videoWidth) return done({ noPicture: true });
+        v.onloadeddata = () => done();
+        setTimeout(() => done(), 4000);
+      };
+      v.onerror = () => done(meta ? { noPicture: true } : {});
+      if (kind === "video") v.preload = "auto";
       v.src = url;
+      setTimeout(() => resolve(null), 15000); // never hang on a broken file
     }
   });
 }
+
+const CANT_PLAY = "This video's format can't be played here. Convert it to MP4 (H.264), e.g. with HandBrake or your phone's \"Most compatible\" camera setting.";
 
 /**
  * Adds files to the media library. By default they only go to the library (preview them there, then add
@@ -83,12 +97,14 @@ function probe(kind, url) {
  */
 export async function importFiles(files, { addToTimeline = false } = {}) {
   const added = [];
+  let warned = false;
   for (const file of files) {
     const kind = kindOf(file);
     if (!kind) continue;
     const url = URL.createObjectURL(file);
     const meta = await probe(kind, url);
-    if (!meta) { toast(`Couldn't read ${file.name}`); continue; }
+    if (!meta) { toast(kind === "video" ? `${file.name}: ${CANT_PLAY}` : `Couldn't read ${file.name}`, 8000); warned = true; continue; }
+    if (meta.noPicture) { toast(`${file.name}: ${CANT_PLAY}`, 8000); warned = true; }
     const id = uid();
     edit((p) => {
       const path = window.cutlineDesktop?.pathFor(file); // desktop app: lets saved projects find the file again
@@ -104,7 +120,7 @@ export async function importFiles(files, { addToTimeline = false } = {}) {
     });
     added.push(id);
   }
-  if (added.length && !addToTimeline) toast(`${added.length} file${added.length > 1 ? "s" : ""} added to the library — click to preview, then add to the timeline`);
+  if (added.length && !addToTimeline && !warned) toast(`${added.length} file${added.length > 1 ? "s" : ""} added to the library — click to preview, then add to the timeline`);
   return added;
 }
 

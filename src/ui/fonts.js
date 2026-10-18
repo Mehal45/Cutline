@@ -1,4 +1,7 @@
-// Title fonts. System fonts work offline; the rest are Google Fonts (SIL Open Font License), loaded on demand.
+// Title fonts: Cutline's own list (system fonts work offline; the rest are Google Fonts, SIL Open Font License,
+// loaded on demand) plus every font installed on this computer (Local Font Access API).
+import { setState } from "../store.js";
+
 export const FONTS = [
   { name: "Inter", css: "Inter, Arial, sans-serif", web: "Inter:wght@300..900" },
   { name: "Arial / system", css: "Arial, Helvetica, sans-serif" },
@@ -56,4 +59,32 @@ export function loadFont(css, weight = 400, italic = false) {
 /** Loads every font a project's texts use (call before export). */
 export function loadProjectFonts(project) {
   return Promise.all(project.texts.map((t) => loadFont(t.style.font, t.style.weight, t.style.italic)));
+}
+
+/** CSS font-family value for an installed font family. */
+export const familyCss = (family) => `'${family.replace(/'/g, "\\'")}', sans-serif`;
+
+export const canListSystemFonts = () => typeof window !== "undefined" && "queryLocalFonts" in window;
+
+let systemLoading = null;
+/**
+ * Lists the font families installed on this computer into state.systemFonts. The desktop app does this at
+ * start; in a browser it needs a click (and the browser asks for permission once).
+ */
+export function loadSystemFonts() {
+  if (!canListSystemFonts()) return Promise.resolve([]);
+  systemLoading ??= (async () => {
+    try {
+      const faces = await window.queryLocalFonts();
+      const families = [...new Set(faces.map((f) => f.family).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+      setState({ systemFonts: families });
+      return families;
+    } catch (err) {
+      console.warn("Couldn't list installed fonts:", err);
+      systemLoading = null;
+      setState({ systemFonts: null });
+      return [];
+    }
+  })();
+  return systemLoading;
 }

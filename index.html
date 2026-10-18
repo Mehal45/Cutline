@@ -266,6 +266,12 @@
     .seg .label { position: relative; z-index: 1; background: rgba(0,0,0,.55); padding: 1px 6px; border-radius: 4px; }
     .seg .speed-badge, .seg .badge, .seg .kmark, .seg .handle { z-index: 2; }
     .seg .badge { position: relative; background: rgba(0,0,0,.5); padding: 0 4px; border-radius: 4px; }
+    .stage-hint { position: absolute; inset: 0; display: grid; place-content: center; gap: 8px; text-align: center; padding: 24px;
+      color: var(--muted); pointer-events: none; max-width: 520px; margin: auto; }
+    .stage-hint b { color: var(--text); font-size: 15px; }
+    .stage-hint.error b { color: #ffb4a8; }
+    .source-stage { position: relative; }
+    .media-item .warn { color: #ffb4a8; font-weight: 600; font-size: 10px; }
   </style>
 </head>
 <body>

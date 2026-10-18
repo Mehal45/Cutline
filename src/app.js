@@ -19,7 +19,7 @@ import { html, fmt, Field } from "./ui/kit.js";
 import { Inspector } from "./ui/inspector.js";
 import { Timeline, dragGesture } from "./ui/timeline.js";
 import { EffectsTab, FiltersTab, AudioTab, TextTab } from "./ui/library.js";
-import { linkWebFonts, loadProjectFonts } from "./ui/fonts.js";
+import { linkWebFonts, loadProjectFonts, loadSystemFonts } from "./ui/fonts.js";
 import {
   saveProject, openProject, newProject, relink, startAutosave, checkRecovery, loadProject, desktop, projectName,
 } from "./project-io.js";
@@ -154,6 +154,7 @@ function MediaTab() {
           : html`<video src=${m.url ? m.url + "#t=0.5" : ""} muted preload="metadata" />`}
         <span>${m.name}</span>
         <small>${m.missing ? "missing" : fmt(m.duration)}
+          ${m.noPicture && html`<b class="warn" title="This video's format can't be shown. Convert it to MP4 (H.264).">⚠ can't play</b>`}
           ${!m.missing && html`<button class="mini add" title=${m.kind === "audio" ? "Add to an audio track at the playhead" : "Add to the end of the main track"}
             onClick=${(e) => { e.stopPropagation(); addMediaToTimeline(m); }}>＋ Add</button>`}
           ${!m.missing && m.kind !== "audio" && html`<button class="mini add" title="Add as a picture-in-picture layer at the playhead"
@@ -212,6 +213,11 @@ function Player() {
     <div class="stage" ref=${stage}>
       <canvas ref=${canvas} width=${previewW} height=${previewH} />
       ${rect && html`<${TransformOverlay} rect=${rect} />`}
+      ${duration <= 0 && html`<div class="stage-hint">
+        <b>The timeline is empty</b>
+        <span>This screen shows your timeline. Click a video in the library on the left to watch it here,
+          then press <b>Add to timeline</b> (or double-click it, or drag it onto the timeline).</span>
+      </div>`}
     </div>
     <div class="transport">
       <button onClick=${() => seek(0)} title="Go to start (Home)">⏮</button>
@@ -637,6 +643,7 @@ function App() {
   useEffect(() => {
     linkWebFonts();
     startAutosave();
+    if (desktop) loadSystemFonts(); // the desktop app can list installed fonts without asking
     // Ctrl + wheel belongs to the timeline; never zoom the whole page.
     const noPageZoom = (e) => { if (e.ctrlKey || e.metaKey) e.preventDefault(); };
     window.addEventListener("wheel", noPageZoom, { passive: false });

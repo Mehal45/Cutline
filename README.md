@@ -8,7 +8,7 @@ A free, open-source CapCut-style video editor for Windows and Mac. No account, n
 - **Background removal** for people, plus a **chroma key** (green screen)
 - **Auto-captions** (Whisper) and **text-to-speech** with 16 natural voices (Kokoro), both on-device
 - **Voice cleanup** (reduce noise, enhance voice, level loudness) and **13 voice effects** (chipmunk, robot, telephone…)
-- **Titles:** 32 fonts, outline, shadow, background plate, letter spacing and 18 presets
+- **Titles:** 32 built-in fonts plus every font installed on your computer, outline, shadow, background plate, letter spacing and 18 presets
 - **Cut fast:** split, trim, ripple delete, merge, freeze frame, detach audio, speed 0.1–10×, magnetic snapping
 - **Blend modes, crop and flips** on any clip or layer
 - **Export** H.264, HEVC, AV1 or VP9 MP4 up to 4K 60 fps, plus WAV audio and PNG stills
@@ -130,6 +130,8 @@ Press **?** in the app for the full list. On a Mac, use ⌘ where it says Ctrl.
 - **Volume above 100%, voice cleanup and voice effects** are heard in the preview once you've pressed play once (browsers only start audio processing after a click).
 - **Background removal** handles people only (not arbitrary objects), and text-to-speech speaks English only.
 - **Projects opened in the browser version** ask you to locate media files again; the desktop app remembers where they are.
+- **Video formats:** anything Chromium plays works (H.264/HEVC/VP9/AV1 in MP4, MOV, MKV or WebM). Some ProRes, DNxHD and old camera formats can't be shown; Cutline says so on import, and converting them to MP4 (H.264) with HandBrake fixes it.
+- **Installed fonts:** they appear automatically in the desktop app. In a browser, click **Show fonts installed on this computer** and allow it once.
 
 ## Third-party models and libraries
 
