@@ -591,6 +591,9 @@ export const TRANSITIONS = {
   clock: "Clock wipe",
   barnDoor: "Barn door",
   heart: "Heart",
+  zoomPush: "Zoom push (in)",
+  zoomPull: "Zoom pull (out)",
+  whip: "Whip",
 };
 
 const FRAG = `#version 300 es
@@ -653,6 +656,19 @@ void main(){
   else if (mode == 22) { vec2 d = f - 0.5; float ang = atan(d.x, -d.y) / 6.28318 + 0.5; float e = smoothstep(p - 0.01, p + 0.01, ang);
     o = mix(texture(B,f), texture(A,f), e); }
   else if (mode == 23) { float e = smoothstep(p - 0.03, p + 0.03, abs(f.x - 0.5) * 2.0); o = mix(texture(B,f), texture(A,f), e); }
+  // Zoom push: the outgoing shot rushes in with a radial blur, the next one settles out of it.
+  else if (mode == 25) { float s = p < 0.5 ? p * 2.0 : (1.0 - p) * 2.0; s = s * s;
+    vec2 c = (f - 0.5) / (1.0 + s * 1.6) + 0.5; o = p < 0.5 ? zoomBlur(A, c, s * 0.35) : zoomBlur(B, c, s * 0.35); }
+  // Zoom pull: the outgoing shot shrinks away with blur, the next one comes in from slightly larger.
+  else if (mode == 26) { float s = p < 0.5 ? p * 2.0 : (1.0 - p) * 2.0; s = s * s;
+    vec2 m = (f - 0.5) * (1.0 + s * 0.9) + 0.5; m = 1.0 - abs(1.0 - mod(m + 2.0, 2.0)); // mirror past the edges
+    o = p < 0.5 ? zoomBlur(A, m, s * 0.25)
+                : zoomBlur(B, (f - 0.5) / (1.0 + s * 0.6) + 0.5, s * 0.25); }
+  // Whip: the picture is flung vertically with heavy motion blur into the next shot.
+  else if (mode == 27) { float e = p * p * (3.0 - 2.0 * p); float bl = sin(p * 3.14159) * 0.18; vec4 acc = vec4(0.0);
+    for (int i = 0; i < 14; i++) { float y = f.y + e + bl * (float(i) / 13.0 - 0.5);
+      acc += y < 1.0 ? texture(A, vec2(f.x, clamp(y, 0.0, 1.0))) : texture(B, vec2(f.x, clamp(y - 1.0, 0.0, 1.0))); }
+    o = acc / 14.0; }
   else if (mode == 24) { vec2 q = (f - vec2(0.5, 0.45)) * vec2(aspect, 1.0) / max(p * 2.2, 1e-3) * 1.6;
     q.y = -q.y + 0.25; float h = pow(q.x * q.x + q.y * q.y - 1.0, 3.0) - q.x * q.x * q.y * q.y * q.y;
     o = (h < 0.0 || p > 0.98) ? texture(B, f) : texture(A, f); }

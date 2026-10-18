@@ -69,8 +69,8 @@ async function tick() {
 
 /** Starts the background builder (checks for new videos every couple of seconds). */
 export function startProxies() {
-  let mode = "on";
-  try { mode = localStorage.getItem("cutline.proxies") || "on"; } catch { /* default */ }
+  let mode = "off";
+  try { mode = localStorage.getItem("cutline.proxies") || "off"; } catch { /* default */ }
   setState({ proxyMode: mode, proxies: {} });
   setInterval(tick, 2000);
 }
