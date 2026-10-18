@@ -3,3 +3,5 @@ dist/
 testmedia/
 .DS_Store
 Thumbs.db
+examples/
+projects/

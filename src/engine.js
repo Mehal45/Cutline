@@ -25,6 +25,8 @@ export const ANIMATIONS = {
   slideUp: { label: "Slide up" },
   slideDown: { label: "Slide down" },
   zoom: { label: "Zoom" },
+  rise: { label: "Rise (from bottom)" },
+  softZoom: { label: "Soft zoom" },
   pop: { label: "Pop" },
   typewriter: { label: "Typewriter", textOnly: true },
 };
@@ -44,6 +46,10 @@ export function animState(anim, lt, dur) {
       case "slideUp": s.dy += (entering ? 0.08 : -0.08) * k; s.alpha *= e; break;
       case "slideDown": s.dy += (entering ? -0.08 : 0.08) * k; s.alpha *= e; break;
       case "zoom": s.scale *= 0.6 + 0.4 * e; s.alpha *= e; break;
+      // Rises from the bottom of the screen with a strong ease-out (titles); a.dist overrides the distance.
+      case "rise": { const q = 1 - Math.pow(1 - p, 3); s.dy += (entering ? 1 : -1) * (a.dist ?? 0.5) * (1 - q); s.alpha *= Math.min(1, p * 2.5); break; }
+      // Grows slightly into place while fading in (captions).
+      case "softZoom": s.scale *= 0.88 + 0.12 * e; s.alpha *= e; break;
       case "pop": s.scale *= entering ? ease.back(p) : e; break;
       case "typewriter": if (entering) s.reveal = p; else s.alpha *= e; break;
     }
