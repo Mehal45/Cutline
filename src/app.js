@@ -609,8 +609,8 @@ function ExportDialog({ onClose }) {
   const [codec, setCodec] = useState("avc");
   const [quality, setQuality] = useState("high");
   const [customKbps, setCustomKbps] = useState(40000);
-  const [smooth, setSmooth] = useState(() => { try { return localStorage.getItem("cutline.smoothMotion") || "flow"; } catch { return "flow"; } });
-  const [blur, setBlur] = useState(() => { try { return +(localStorage.getItem("cutline.motionBlur") ?? 0.25); } catch { return 0.25; } });
+  const [smooth, setSmooth] = useState(() => { try { return localStorage.getItem("cutline.smoothMotion") || "off"; } catch { return "off"; } });
+  const [blur, setBlur] = useState(() => { try { return +(localStorage.getItem("cutline.motionBlur") ?? 0); } catch { return 0; } });
   const [support, setSupport] = useState(null);
   const abort = useRef(null);
   const size = sizeFor(p, res);

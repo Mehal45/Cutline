@@ -133,9 +133,9 @@ export function bitrateFor(width, height, fps, quality = "high", customKbps) {
   return Math.round(Math.min(200e6, Math.max(1.5e6, width * height * fps * (QUALITY[quality]?.bpp ?? 0.13))));
 }
 
-async function pickVideoCodec(codec, width, height, fps, bitrate) {
+async function pickVideoCodec(codec, width, height, fps, bitrate, software = false) {
   for (const s of VIDEO_CODECS[codec].strings) {
-    const cfg = { codec: s, width, height, bitrate, framerate: fps };
+    const cfg = { codec: s, width, height, bitrate, framerate: fps, ...(software ? { hardwareAcceleration: "prefer-software" } : {}) };
     try { if ((await VideoEncoder.isConfigSupported(cfg)).supported) return cfg; } catch { /* next */ }
   }
   return null;
@@ -223,13 +223,25 @@ async function prepareFrame(project, t, decoders, smooth) {
  * opts = { width, height, fps, codec: "avc"|"hevc"|"av1"|"vp9", quality } (defaults: project size, H.264, high).
  */
 export async function exportMp4(project, onProgress, signal, opts = {}) {
+  try {
+    return await exportOnce(project, onProgress, signal, opts);
+  } catch (e) {
+    // The graphics card's encoder sometimes stops part-way (driver hiccup). Try once more with the software encoder.
+    const encoderFailed = /encode|encoder|codec/i.test(String(e?.message || e)) && e?.name !== "AbortError";
+    if (!encoderFailed || opts.software) throw e;
+    console.warn("Export: hardware encoder failed, retrying with the software encoder", e);
+    return exportOnce(project, onProgress, signal, { ...opts, software: true });
+  }
+}
+
+async function exportOnce(project, onProgress, signal, opts = {}) {
   const width = opts.width ?? project.width, height = opts.height ?? project.height, fps = opts.fps ?? project.fps;
   const duration = projectDuration(project);
   if (duration <= 0) throw new Error("Nothing to export — add a clip first.");
 
   const codec = opts.codec ?? "avc";
   const bitrate = bitrateFor(width, height, fps, opts.quality, opts.customKbps);
-  const vcfg = await pickVideoCodec(codec, width, height, fps, bitrate);
+  const vcfg = await pickVideoCodec(codec, width, height, fps, bitrate, opts.software);
   if (!vcfg) {
     if (await pickVideoCodec(codec, width, height, fps, 8e6)) {
       throw new Error(`This computer's ${VIDEO_CODECS[codec].label.split(" (")[0]} encoder doesn't accept ${Math.round(bitrate / 1000).toLocaleString()} kbps at ${width}×${height}. Try a lower bitrate.`);
@@ -270,6 +282,7 @@ export async function exportMp4(project, onProgress, signal, opts = {}) {
       const t = i / fps;
       await prepareFrame(project, t, decoders, smooth);
       drawFrame(ctx, project, t);
+      if (encodeError || venc.state === "closed") throw encodeError || new Error("The video encoder stopped");
       const frame = new VideoFrame(canvas, { timestamp: Math.round((i * 1e6) / fps), duration: Math.round(1e6 / fps) });
       venc.encode(frame, { keyFrame: i % (fps * 2) === 0 });
       frame.close();

@@ -13,7 +13,7 @@ A free, open-source CapCut-style video editor for Windows and Mac. No account, n
 - **Titles:** 32 built-in fonts plus every font installed on your computer, outline, shadow, background plate, letter spacing and 18 presets
 - **Speed curves:** smooth speed ramps (e.g. normal → fast → normal) with presets and an editable curve, plus one-click smooth (ease in & out) motion for keyframes
 - **Preview quality** Full / ½ / ¼ for smooth playback on slower computers (export is always full quality)
-- **Smooth preview** (⚡ in the viewer bar): light 720p copies of your videos are made in the background, so scrubbing, fast-forward and animations play smoothly even with OBS recordings. Building pauses while you play or export, and copies are reused next time (desktop app). Export always uses the originals
+- **Smooth preview** (⚡ in the viewer bar, off until you turn it on): light 720p copies of your videos are made in the background, so scrubbing, fast-forward and animations play smoothly even with OBS recordings. Building pauses while you play or export, and copies are reused next time (desktop app). Export always uses the originals
 - **Sound on text:** give a title a sound effect (drag it from the library onto the text, right-click › Sound with this text, or the text's Sound section). It plays as the in-animation finishes, when the text appears, or after a delay you choose, follows the text when you move it, and can be applied to every text or caption at once
 - **Smooth speed at cuts:** right-click a cut ◆ or a clip to ease the speed into the next clip, in from the previous one, or across the cut (0.3, 0.6 or 1 s ramp)
 - **Exact numbers:** every slider has a number box you can type into; volume is shown in decibels (0 dB = unchanged, −6 dB = half)
@@ -22,7 +22,9 @@ A free, open-source CapCut-style video editor for Windows and Mac. No account, n
 - **Saved elements:** right-click a clip or layer › **Save as element** to keep it with all its settings (e.g. a green screen with its key, size and position done). The **Elements** tab adds it to any project in one click or by dragging, and brings in the file if it isn't in the library yet
 - **Compound clips:** select clips, layers and texts and press **Alt+G** (or right-click › Create compound clip) to pack them into one clip you can trim, speed up, move and add effects to. Double-click it to edit what's inside (◂ Back returns), nest them as deep as you like, reuse them from the library, or **Break apart** to unpack
 - **Long recordings of any size:** multi-GB OBS recordings (MKV or MP4) are read a piece at a time, so they export quickly, with their sound, without loading the whole file into memory
-- **Smooth motion export:** export 60 fps recordings at 90 or 120 fps with GPU motion interpolation (or frame blending), plus optional light motion blur; also smooths slow motion
+- **Opening projects:** double-click a `.cutline` file (or Open with › Cutline) to open it
+- **Text animations and transitions** include Rise and Soft zoom (titles and captions), plus Zoom push, Zoom pull and Whip transitions
+- **Smooth motion export:** export 60 fps recordings at 90 or 120 fps with GPU motion interpolation (or frame blending), plus optional light motion blur (both off by default); also smooths slow motion
 - **Export** H.264, HEVC, AV1 or VP9 MP4 up to 4K 120 fps at any bitrate (e.g. 40,000 kbps), plus WAV audio and PNG stills
 - **Projects** save and open as `.cutline` files, with autosave and crash recovery in the desktop app
 
