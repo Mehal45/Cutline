@@ -7,6 +7,16 @@ import { allVideoElements, clipSpeed, elementFor } from "./engine.js";
 import { resumeLive } from "./audiofx.js";
 import { splitKeyframes, shiftKeyframes, setKey, removeKey, keyAt, propAt, hasKeys, setStatic } from "./keyframes.js";
 import { EFFECTS, FILTERS } from "./fx.js";
+import { hasCurve, sourceAt, sourceSpan, subCurve } from "./speed.js";
+
+/** Splits a clip's speed curve at local time `local` between two halves a (before) and b (after); mutates. */
+function splitCurve(a, b, local) {
+  if (!hasCurve(a)) return;
+  const full = a.speedCurve;
+  const total = local + b.dur;
+  b.speedCurve = subCurve(full, local, total, total);
+  a.speedCurve = subCurve(full, 0, local, total);
+}
 
 // ---------------- playback clock ----------------
 
@@ -231,7 +241,8 @@ function splitTimed(p, lane, ids, time) {
     b.id = uid();
     b.start = time;
     b.dur = a.dur - local;
-    if ("in" in a) b.in = (a.in || 0) + local * clipSpeed(a);
+    if ("in" in a) b.in = sourceAt(a, local);
+    splitCurve(a, b, local);
     a.dur = local;
     if (a.words) { a.words = a.words.filter((w) => w.t0 < time); b.words = b.words.filter((w) => w.t0 >= time); }
     if (a.keyframes) [a.keyframes, b.keyframes] = splitKeyframes(a, local);
@@ -280,9 +291,10 @@ function splitMain(p, seg, time) {
   const i = p.main.findIndex((s) => s.id === seg.id);
   const a = p.main[i];
   const local = time - seg.start;
-  const b = { ...structuredClone(a), id: uid(), in: a.in + local * clipSpeed(a), dur: a.dur - local };
+  const b = { ...structuredClone(a), id: uid(), in: sourceAt(a, local), dur: a.dur - local };
   b.anim = { in: { ...a.anim.in, type: "none" }, out: a.anim.out };
   if (a.keyframes) [a.keyframes, b.keyframes] = splitKeyframes(a, local);
+  splitCurve(a, b, local);
   if (a.audio?.fadeOut) a.audio.fadeOut = 0;
   if (b.audio?.fadeIn) b.audio.fadeIn = 0;
   a.dur = local;
@@ -341,7 +353,7 @@ export const clampZoom = (z) => Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
 export function zoomToFit() {
   const el = document.querySelector(".tl-scroll");
   const dur = Math.max(1, projectDuration(getState().project));
-  setState({ zoom: clampZoom(((el?.clientWidth || 1200) - 70 - 40) / dur) });
+  setState({ zoomFit: true, zoom: clampZoom(((el?.clientWidth || 1200) - 70 - 40) / dur) });
   if (el) el.scrollLeft = 0;
 }
 
@@ -496,7 +508,8 @@ export function setClipSpeed(speed, ids) {
   edit((p) => {
     for (const s of [...p.main, ...p.overlays, ...p.audio]) {
       if (!targets.has(s.id)) continue;
-      const span = s.dur * clipSpeed(s); // seconds of source footage used
+      const span = sourceSpan(s); // seconds of source footage used
+      delete s.speedCurve; // a constant speed replaces any speed curve
       s.speed = speed;
       s.dur = Math.max(0.05, span / speed);
     }
@@ -640,7 +653,7 @@ export async function freezeFrame(dur = 3) {
   if (media.kind !== "video") return toast("Freeze frame works on video clips");
   const local = time - item.start;
   const el = elementFor(item, media);
-  const srcTime = (item.in || 0) + local * clipSpeed(item);
+  const srcTime = sourceAt(item, local);
   if (Math.abs(el.currentTime - srcTime) > 1 / 60) {
     await new Promise((r) => { el.addEventListener("seeked", r, { once: true }); el.currentTime = srcTime; setTimeout(r, 1500); });
   }
@@ -673,7 +686,8 @@ export async function freezeFrame(dur = 3) {
       const a = p.main[i];
       const freeze = { ...newClip(mid, dur), ...copyLook(a) };
       if (local < 0.02) { p.main.splice(i, 0, freeze); return; }
-      const b = { ...structuredClone(a), id: uid(), in: a.in + local * clipSpeed(a), dur: a.dur - local, keyframes: undefined };
+      const b = { ...structuredClone(a), id: uid(), in: sourceAt(a, local), dur: a.dur - local, keyframes: undefined };
+      splitCurve(a, b, local);
       b.anim = { in: { ...a.anim.in, type: "none" }, out: a.anim.out };
       a.dur = local;
       a.anim.out = { ...a.anim.out, type: "none" };
@@ -696,7 +710,7 @@ export function mergeClips() {
   edit((p) => {
     for (let i = p.main.length - 2; i >= 0; i--) {
       const a = p.main[i], b = p.main[i + 1];
-      if (!ids.has(a.id) || !ids.has(b.id) || a.mediaId !== b.mediaId || clipSpeed(a) !== clipSpeed(b)) continue;
+      if (!ids.has(a.id) || !ids.has(b.id) || a.mediaId !== b.mediaId || clipSpeed(a) !== clipSpeed(b) || hasCurve(a) || hasCurve(b)) continue;
       if (Math.abs(a.in + a.dur * clipSpeed(a) - b.in) > 0.05) continue; // not contiguous footage
       a.dur += b.dur;
       a.transition = b.transition;
@@ -720,7 +734,8 @@ export function detachAudio() {
     const start = s.kind === "main" ? segs.find((x) => x.id === s.id).start : it.start;
     p.audio.push({
       id: uid(), mediaId: it.mediaId, track: freeTrack(p.audio, start, it.dur), start, in: it.in || 0, dur: it.dur,
-      ...(it.speed ? { speed: it.speed } : {}), ...(it.audio ? { audio: structuredClone(it.audio) } : {}),
+      ...(it.speed ? { speed: it.speed } : {}), ...(it.speedCurve ? { speedCurve: structuredClone(it.speedCurve) } : {}),
+      ...(it.audio ? { audio: structuredClone(it.audio) } : {}),
       ...(it.keyframes?.volume ? { keyframes: { volume: structuredClone(it.keyframes.volume) } } : {}),
     });
     it.mute = true;

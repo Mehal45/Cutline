@@ -272,6 +272,20 @@
     .stage-hint.error b { color: #ffb4a8; }
     .source-stage { position: relative; }
     .media-item .warn { color: #ffb4a8; font-weight: 600; font-size: 10px; }
+    .stage canvas { max-width: none; max-height: none; }
+    .stage { display: flex; align-items: center; justify-content: center; padding: 12px; min-height: 0; min-width: 0; overflow: hidden; }
+    .player { grid-template-rows: minmax(0, 1fr) auto; }
+    main { min-height: 0; }
+    .track-label { transform: translateX(var(--sx, 0px)); z-index: 6; box-shadow: 4px 0 8px rgba(0,0,0,.35); }
+    .playhead { z-index: 5; }
+    .itabs.two { grid-template-columns: 1fr 1fr; }
+    .speedcurve .chips .chip { font-size: 11px; }
+    .sc-grid { stroke: var(--line); stroke-width: 1; }
+    .sc-one { stroke: #ffffff55; stroke-width: 1; stroke-dasharray: 3 3; }
+    .sc-label { fill: var(--muted); font-size: 9px; text-anchor: end; }
+    .sc-play { stroke: var(--accent); stroke-width: 1.5; }
+    .smoothbox { margin: 6px 0 10px; }
+    .transport .pq { margin-left: 8px; padding: 3px 6px; font-size: 12px; }
   </style>
 </head>
 <body>

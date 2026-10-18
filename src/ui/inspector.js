@@ -11,7 +11,10 @@ import { VOICE_EFFECTS } from "../audiofx.js";
 import { cutoutStatus, loadCutout } from "../segment.js";
 import { uid } from "../store.js";
 import { html, Field, Section, KSlider, Slider, CurveEditor } from "./kit.js";
-import { FONTS, loadFont, familyCss, canListSystemFonts, loadSystemFonts } from "./fonts.js";
+import { FONTS, loadFont, familyCss, canListSystemFonts, loadSystemFonts, rememberFont, fontName } from "./fonts.js";
+import { SpeedCurveEditor } from "./speedcurve.js";
+import { hasCurve } from "../speed.js";
+import { setDefaultEase, defaultEase } from "../keyframes.js";
 
 const pct = (v) => `${Math.round(v * 100)}%`;
 const deg = (v) => `${Math.round(v)}°`;
@@ -37,8 +40,17 @@ function AnimFields({ anim, onChange, textOnly }) {
   return html`<div>${part("in", "In animation")}${part("out", "Out animation")}</div>`;
 }
 
-function SpeedFields({ speed, ids }) {
+function SpeedFields({ speed, ids, kind, id }) {
+  const item = useStore((s) => (kind ? findItem(s.project, kind, id) : null));
+  const [mode, setMode] = useState(item && hasCurve(item) ? "curve" : "normal");
+  const curveTab = kind && html`<div class="itabs two">
+    <button class=${mode === "normal" ? "tab on" : "tab"} onClick=${() => setMode("normal")}>Normal speed</button>
+    <button class=${mode === "curve" ? "tab on" : "tab"} onClick=${() => setMode("curve")}>〰 Speed curve</button>
+  </div>`;
+  if (kind && mode === "curve") return html`<div class="speed">${curveTab}<${SpeedCurveEditor} kind=${kind} id=${id} /></div>`;
   return html`<div class="speed">
+    ${curveTab}
+    ${item && hasCurve(item) && html`<p class="muted">This clip has a speed curve; picking a speed below replaces it.</p>`}
     <${Field} label=${`Speed ${speed.toFixed(2).replace(/\.?0+$/, "")}×`}>
       <div class="speed-chips">
         ${SPEED_PRESETS.map((v) => html`<button key=${v} class=${Math.abs(speed - v) < 1e-3 ? "chip on" : "chip"}
@@ -103,7 +115,6 @@ function SourceSection({ kind, item, media }) {
   const speed = clipSpeed(item);
   const maxSrc = media?.kind === "image" ? 1e9 : media.duration;
   return html`<${Section} title="Timing" open=${kind === "main"}>
-    <${SpeedFields} speed=${speed} ids=${[item.id]} />
     <${Field} label=${`Starts at ${(item.in || 0).toFixed(2)}s of source`}>
       <input type="range" min="0" max=${Math.max(0, (media?.kind === "image" ? 60 : media.duration) - 0.1)} step="0.01" value=${item.in || 0}
         onChange=${(e) => set((s) => { s.in = +e.target.value; s.dur = Math.min(s.dur, (maxSrc - s.in) / speed); })} />
@@ -236,6 +247,23 @@ export function AudioSection({ kind, item, media }) {
   </div>`;
 }
 
+/** One-click smoothing: every keyframe eases in and out, and new keyframes do so by default. */
+function SmoothControls({ kind, item }) {
+  const smoothNew = useStore((s) => s.keySmooth) ?? defaultEase() !== "linear";
+  const count = Object.values(item.keyframes || {}).reduce((a, ks) => a + ks.length, 0);
+  const allSmooth = count > 0 && Object.values(item.keyframes).every((ks) => ks.every((k) => k.ease === "easeInOut"));
+  return html`<div class="smoothbox">
+    <button class=${allSmooth ? "wide chip on" : "wide primary"} disabled=${count < 2}
+      title="Every move starts and ends gently, like real motion"
+      onClick=${() => edit((p) => { const it = findItem(p, kind, item.id); for (const ks of Object.values(it.keyframes || {})) ks.forEach((k) => (k.ease = "easeInOut")); })}>
+      ${allSmooth ? "✓ All motion is smooth" : "〰 Make all motion smooth (ease in & out)"}
+    </button>
+    <label class="check"><input type="checkbox" checked=${smoothNew}
+      onChange=${(e) => { setDefaultEase(e.target.checked ? "easeInOut" : "linear"); setState({ keySmooth: e.target.checked }); }} />
+      New keyframes start and end smoothly</label>
+  </div>`;
+}
+
 function AnimateSection({ kind, item, textOnly, onAnim, note }) {
   const set = liveSet(kind, item.id);
   return html`<div>
@@ -245,6 +273,7 @@ function AnimateSection({ kind, item, textOnly, onAnim, note }) {
     <//>
     <${Section} title="Keyframe curves">
       <p class="muted">Press ◆ next to any slider to add a keyframe at the playhead. Move the playhead, change the value, and it animates between them.</p>
+      <${SmoothControls} kind=${kind} item=${item} />
       <${CurveEditor} kind=${kind} id=${item.id} />
     <//>
   </div>`;
@@ -254,7 +283,7 @@ function VisualInspector({ kind, item, project }) {
   const [tab, setTab] = useState("basic");
   const media = project.media[item.mediaId];
   const hasSound = media?.kind === "video";
-  const tabs = [["basic", "Basic"], ["color", "Colour"], ["effects", "Effects"], ["cutout", "Cutout"], ...(hasSound ? [["audio", "Audio"]] : []), ["animate", "Animate"]];
+  const tabs = [["basic", "Basic"], ["speed", "Speed"], ["color", "Colour"], ["effects", "Effects"], ["cutout", "Cutout"], ...(hasSound ? [["audio", "Audio"]] : []), ["animate", "Animate"]];
   const t = tabs.some(([k]) => k === tab) ? tab : "basic";
   return html`<aside class="panel inspector">
     <h3>${kind === "overlay" ? "Layer" : "Clip"}</h3>
@@ -268,6 +297,7 @@ function VisualInspector({ kind, item, project }) {
         ${media?.kind === "video" && html`<button onClick=${() => freezeFrame()} title="Hold the frame under the playhead for 3 seconds">❄ Freeze frame</button>`}
         ${kind === "main" && html`<button onClick=${mergeClips} title="Select neighbouring pieces of one clip, then merge">⊕ Merge</button>`}
       </div>`}
+    ${t === "speed" && html`<${SpeedFields} speed=${clipSpeed(item)} ids=${[item.id]} kind=${kind} id=${item.id} />`}
     ${t === "color" && html`<${FilterSection} kind=${kind} item=${item} /><${AdjustSection} kind=${kind} item=${item} />`}
     ${t === "effects" && html`<${EffectsSection} kind=${kind} item=${item} />`}
     ${t === "cutout" && html`<${CutoutSection} kind=${kind} item=${item} />`}
@@ -283,6 +313,7 @@ function VisualInspector({ kind, item, project }) {
 /** Font, size, weight, case, alignment and spacing. `setSt(key, value, live)` decides which texts change. */
 function TextFontFields({ st, setSt }) {
   const installed = useStore((s) => s.systemFonts);
+  const recent = useStore((s) => s.recentFonts) || [];
   const known = FONTS.some((f) => f.css === st.font) || (installed || []).some((f) => familyCss(f) === st.font);
   return html`<div>
     <div class="grid2">
@@ -294,8 +325,11 @@ function TextFontFields({ st, setSt }) {
       <//>
     </div>
     <${Field} label="Font">
-      <select value=${st.font} onChange=${(e) => { loadFont(e.target.value, st.weight); setSt("font", e.target.value); }}>
+      <select value=${st.font} onChange=${(e) => { loadFont(e.target.value, st.weight); rememberFont(e.target.value); setSt("font", e.target.value); }}>
         ${!known && html`<option value=${st.font}>${st.font.split(",")[0].replace(/'/g, "")} (not on this computer)</option>`}
+        ${recent.length > 0 && html`<optgroup label="Recently used">
+          ${recent.map((css) => html`<option key=${"r" + css} value=${css} style=${{ fontFamily: css }}>${fontName(css)}</option>`)}
+        </optgroup>`}
         <optgroup label="Cutline fonts">
           ${FONTS.map((f) => html`<option value=${f.css} style=${{ fontFamily: f.css }}>${f.name}</option>`)}
         </optgroup>
@@ -452,7 +486,7 @@ function AudioInspector({ item, project }) {
   return html`<aside class="panel inspector">
     <h3>Audio</h3>
     <p class="muted ell">${media?.name}</p>
-    <${SpeedFields} speed=${clipSpeed(item)} ids=${[item.id]} />
+    <${SpeedFields} speed=${clipSpeed(item)} ids=${[item.id]} kind="audio" id=${item.id} />
     <${AudioSection} kind="audio" item=${item} media=${media} />
     <${Section} title="Volume keyframe curves" open=${false}><${CurveEditor} kind="audio" id=${item.id} /><//>
     <button class="danger wide" onClick=${deleteSelection}>Delete</button>

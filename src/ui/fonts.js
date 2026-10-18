@@ -88,3 +88,22 @@ export function loadSystemFonts() {
   })();
   return systemLoading;
 }
+
+// ---------------- recently used fonts ----------------
+
+const RECENT_KEY = "cutline.recentFonts";
+/** The last 4 fonts picked (CSS values), most recent first; remembered on this computer. */
+export function loadRecentFonts() {
+  let list = [];
+  try { list = JSON.parse(localStorage.getItem(RECENT_KEY) || "[]"); } catch { /* none yet */ }
+  setState({ recentFonts: Array.isArray(list) ? list.slice(0, 4) : [] });
+}
+export function rememberFont(css) {
+  let list = [];
+  try { list = JSON.parse(localStorage.getItem(RECENT_KEY) || "[]"); } catch { /* none yet */ }
+  list = [css, ...list.filter((x) => x !== css)].slice(0, 4);
+  try { localStorage.setItem(RECENT_KEY, JSON.stringify(list)); } catch { /* not saved */ }
+  setState({ recentFonts: list });
+}
+/** Display name for a font CSS value. */
+export const fontName = (css) => FONTS.find((f) => f.css === css)?.name || css.split(",")[0].replace(/['"]/g, "").trim();

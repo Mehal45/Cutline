@@ -9,6 +9,7 @@ import { buildChain, needsChain, prepareContext, loudnessGain } from "./audiofx.
 import { decodeMedia } from "./media-audio.js";
 import { loadCutout } from "./segment.js";
 import { hasKeys } from "./keyframes.js";
+import { hasCurve, sourceSpan, rateSamples } from "./speed.js";
 
 /** Every piece of timeline audio: { item, start, buf-source media } — main clips, overlay layers, audio items. */
 function audioSources(project) {
@@ -59,7 +60,8 @@ export async function mixAudio(project, sampleRate = 48000, channels = 2) {
       gain.gain.setValueCurveAtTime(curve, start, Math.max(0.001, item.dur));
     }
     const speed = clipSpeed(item);
-    const level = item.audio?.normalize ? loudnessGain(buf, item.in || 0, (item.in || 0) + item.dur * speed) : 1;
+    const span = sourceSpan(item);
+    const level = item.audio?.normalize ? loudnessGain(buf, item.in || 0, (item.in || 0) + span) : 1;
     src.connect(gain);
     if (needsChain(item.audio) || level !== 1) {
       const chain = buildChain(ctx, item.audio || {}, level);
@@ -69,8 +71,11 @@ export async function mixAudio(project, sampleRate = 48000, channels = 2) {
       gain.connect(ctx.destination);
     }
     // Speed changes pitch in the offline mix (the live preview keeps pitch).
-    src.playbackRate.value = speed;
-    src.start(start, item.in || 0, item.dur * speed);
+    if (hasCurve(item)) {
+      src.playbackRate.setValueAtTime(rateSamples(item, 2)[0], 0);
+      src.playbackRate.setValueCurveAtTime(rateSamples(item, Math.ceil(item.dur * 100)), start, Math.max(0.001, item.dur));
+    } else src.playbackRate.value = speed;
+    src.start(start, item.in || 0, span);
   }
   return ctx.startRendering();
 }
@@ -91,10 +96,18 @@ export const VIDEO_CODECS = {
   vp9: { label: "VP9", strings: ["vp09.00.50.08", "vp09.00.41.08", "vp09.00.40.08", "vp09.00.31.08"] },
 };
 
-export const QUALITY = { high: { label: "High", bpp: 0.13 }, standard: { label: "Standard", bpp: 0.08 }, small: { label: "Small file", bpp: 0.045 } };
+export const QUALITY = {
+  max: { label: "Maximum", bpp: 0.3 },
+  high: { label: "High", bpp: 0.13 },
+  standard: { label: "Standard", bpp: 0.08 },
+  small: { label: "Small file", bpp: 0.045 },
+  custom: { label: "Custom bitrate…" },
+};
 
-export function bitrateFor(width, height, fps, quality = "high") {
-  return Math.round(Math.min(80e6, Math.max(1.5e6, width * height * fps * (QUALITY[quality]?.bpp ?? 0.13))));
+/** Video bitrate in bits/s. `customKbps` is used when quality is "custom" (e.g. 40000 = 40 Mbps). */
+export function bitrateFor(width, height, fps, quality = "high", customKbps) {
+  if (quality === "custom" && customKbps > 0) return Math.round(customKbps * 1000);
+  return Math.round(Math.min(200e6, Math.max(1.5e6, width * height * fps * (QUALITY[quality]?.bpp ?? 0.13))));
 }
 
 async function pickVideoCodec(codec, width, height, fps, bitrate) {
@@ -161,8 +174,12 @@ export async function exportMp4(project, onProgress, signal, opts = {}) {
   if (duration <= 0) throw new Error("Nothing to export — add a clip first.");
 
   const codec = opts.codec ?? "avc";
-  const vcfg = await pickVideoCodec(codec, width, height, fps, bitrateFor(width, height, fps, opts.quality));
+  const bitrate = bitrateFor(width, height, fps, opts.quality, opts.customKbps);
+  const vcfg = await pickVideoCodec(codec, width, height, fps, bitrate);
   if (!vcfg) {
+    if (await pickVideoCodec(codec, width, height, fps, 8e6)) {
+      throw new Error(`This computer's ${VIDEO_CODECS[codec].label.split(" (")[0]} encoder doesn't accept ${Math.round(bitrate / 1000).toLocaleString()} kbps at ${width}×${height}. Try a lower bitrate.`);
+    }
     if (codec === "avc") throw new Error("This browser cannot encode H.264 video. Try Chrome or Edge.");
     throw new Error(`This computer can't encode ${VIDEO_CODECS[codec].label.split(" (")[0]} at ${width}×${height}. Pick H.264 or a smaller size.`);
   }

@@ -7,6 +7,7 @@ import { applyFx, hasFx, ADJUST } from "./fx.js";
 import { cutoutFrame } from "./segment.js";
 import { needsLiveRoute, routeLive, isRouted } from "./audiofx.js";
 import { levelFor } from "./media-audio.js";
+import { meanSpeed, sourceAt, rateAt } from "./speed.js";
 
 // ---------- easing + animation presets (pure functions of time) ----------
 
@@ -114,7 +115,7 @@ export function activeClips(project, t) {
     const prevTr = i > 0 && segs[i - 1].transition ? segs[i - 1].transition.dur / 2 : 0;
     if (t >= seg.start - prevTr && t < end + half) {
       const local = Math.max(0, Math.min(seg.dur - 1e-3, t - seg.start));
-      out.push({ seg, index: i, local, sourceTime: seg.in + local * clipSpeed(seg) });
+      out.push({ seg, index: i, local, sourceTime: sourceAt(seg, local) });
     }
   }
   // Transition progress if two clips overlap in this window.
@@ -223,8 +224,8 @@ function layer(W, H) {
   return c;
 }
 
-/** Playback speed of a main-track clip. Timeline duration = source span / speed. */
-export const clipSpeed = (seg) => seg.speed ?? 1;
+/** Average playback speed of a clip (its constant speed, or the mean of its speed curve). Timeline duration = source span / speed. */
+export const clipSpeed = (seg) => meanSpeed(seg);
 
 export const clipTransform = (seg) => seg.transform ?? { x: 0.5, y: 0.5, scale: 1, rotation: 0 };
 
@@ -427,7 +428,7 @@ export function activeTimed(list, t) {
   for (const item of list || []) {
     if (t < item.start || t >= item.start + item.dur) continue;
     const local = t - item.start;
-    out.push({ item, local, sourceTime: (item.in || 0) + local * clipSpeed(item) });
+    out.push({ item, local, sourceTime: sourceAt(item, local) });
   }
   return out;
 }
@@ -620,8 +621,10 @@ export function syncMedia(project, t, playing) {
       else el.volume = Math.max(0, Math.min(1, vol));
     }
     if (playing && !frozen) {
-      const rate = clipSpeed(item);
-      if (el.playbackRate !== rate) el.playbackRate = rate;
+      // Follow the speed (curve), and catch up gently on small drift by nudging the rate instead of seeking.
+      const drift = sourceTime - el.currentTime;
+      const rate = Math.max(0.0625, Math.min(16, rateAt(item, lt) + Math.max(-0.5, Math.min(0.5, drift * 2.5))));
+      if (Math.abs(el.playbackRate - rate) > 0.005) el.playbackRate = rate;
       if (Math.abs(el.currentTime - sourceTime) > 0.3 * Math.max(1, rate)) el.currentTime = sourceTime;
       if (el.paused) el.play().catch(() => {});
     } else {

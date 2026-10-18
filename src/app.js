@@ -19,13 +19,13 @@ import { html, fmt, Field } from "./ui/kit.js";
 import { Inspector } from "./ui/inspector.js";
 import { Timeline, dragGesture } from "./ui/timeline.js";
 import { EffectsTab, FiltersTab, AudioTab, TextTab } from "./ui/library.js";
-import { linkWebFonts, loadProjectFonts, loadSystemFonts } from "./ui/fonts.js";
+import { linkWebFonts, loadProjectFonts, loadSystemFonts, loadRecentFonts } from "./ui/fonts.js";
 import {
   saveProject, openProject, newProject, relink, startAutosave, checkRecovery, loadProject, desktop, projectName,
 } from "./project-io.js";
 
 const additiveKey = (e) => e.shiftKey || e.ctrlKey || e.metaKey;
-setState({ snap: true, timelineH: 300 });
+setState({ snap: true, timelineH: 300, previewQuality: (() => { try { return +localStorage.getItem("cutline.previewQuality") || 1; } catch { return 1; } })() });
 
 // ---------------- render loop ----------------
 
@@ -192,12 +192,26 @@ function Player() {
   const duration = useStore((s) => projectDuration(s.project));
   const previewW = width >= height ? 960 : Math.round(960 * (width / height));
   const previewH = Math.round(previewW * (height / width));
+  const quality = useStore((s) => s.previewQuality) ?? 1;
   const [rect, setRect] = useState(null);
 
   useEffect(() => startRenderLoop(canvas.current), []);
   useLayoutEffect(() => {
     const update = () => {
-      const c = canvas.current;
+      const c = canvas.current, st = stage.current;
+      // Fit the whole frame inside the stage (letterboxed), whatever the window and aspect ratio.
+      const pad = 24;
+      const aw = Math.max(10, st.clientWidth - pad), ah = Math.max(10, st.clientHeight - pad);
+      const k = Math.min(aw / previewW, ah / previewH);
+      const w = Math.floor(previewW * k), h = Math.floor(previewH * k);
+      if (c.style.width !== w + "px") c.style.width = w + "px";
+      if (c.style.height !== h + "px") c.style.height = h + "px";
+      // Render resolution: the on-screen size (sharp on high-DPI screens) × the chosen preview quality,
+      // never above the project's own resolution. Lower = smoother playback on slower computers.
+      const bw = Math.max(64, Math.round(Math.min(width, w * (window.devicePixelRatio || 1) * quality)));
+      const bh = Math.max(36, Math.round((bw * previewH) / previewW));
+      if (c.width !== bw) c.width = bw;
+      if (c.height !== bh) c.height = bh;
       setRect({ left: c.offsetLeft, top: c.offsetTop, width: c.offsetWidth, height: c.offsetHeight });
     };
     update();
@@ -205,7 +219,7 @@ function Player() {
     ro.observe(canvas.current);
     ro.observe(stage.current);
     return () => ro.disconnect();
-  }, [previewW, previewH]);
+  }, [previewW, previewH, quality, width]);
 
   const previewing = useStore((s) => !!s.preview);
   return html`<section class=${"player" + (previewing ? " previewing" : "")}>
@@ -224,6 +238,12 @@ function Player() {
       <button class="play" onClick=${togglePlay} title="Play/pause (Space)">${playing ? "❚❚" : "▶"}</button>
       <button onClick=${() => seek(duration)} title="Go to end (End)">⏭</button>
       <span class="tc">${fmt(time)} / ${fmt(duration)}</span>
+      <select class="pq" value=${quality} title="Preview quality: lower is smoother on slower computers (export is always full quality)"
+        onChange=${(e) => { const q = +e.target.value; setState({ previewQuality: q }); try { localStorage.setItem("cutline.previewQuality", q); } catch {} }}>
+        <option value="1">Preview: Full</option>
+        <option value="0.5">Preview: ½</option>
+        <option value="0.25">Preview: ¼</option>
+      </select>
       <span class="hint">Click the video to select · drag to move · corners resize · top handle rotates</span>
     </div>
   </section>`;
@@ -473,6 +493,7 @@ function ExportDialog({ onClose }) {
   const [fps, setFps] = useState(p.fps);
   const [codec, setCodec] = useState("avc");
   const [quality, setQuality] = useState("high");
+  const [customKbps, setCustomKbps] = useState(40000);
   const [support, setSupport] = useState(null);
   const abort = useRef(null);
   const size = sizeFor(p, res);
@@ -485,7 +506,7 @@ function ExportDialog({ onClose }) {
     const started = performance.now();
     try {
       await loadProjectFonts(getState().project);
-      const blob = await exportMp4(getState().project, setProgress, abort.current.signal, { ...size, fps, codec, quality });
+      const blob = await exportMp4(getState().project, setProgress, abort.current.signal, { ...size, fps, codec, quality, customKbps });
       setUrl(URL.createObjectURL(blob));
       setPhase(`in ${((performance.now() - started) / 1000).toFixed(1)}s · ${(blob.size / 1e6).toFixed(1)} MB`);
     } catch (err) {
@@ -521,7 +542,15 @@ function ExportDialog({ onClose }) {
         </select>
       <//>
     </div>
-    <p class="muted">${size.width}×${size.height} · ${fps} fps · ~${(bitrateFor(size.width, size.height, fps, quality) / 1e6).toFixed(1)} Mbps · MP4 · ${fmt(projectDuration(p))}</p>
+    ${quality === "custom" && html`<${Field} label="Video bitrate (kbps)">
+      <div class="row">
+        <input type="number" min="500" max="500000" step="500" value=${customKbps} disabled=${busy} style=${{ flex: 1 }}
+          onChange=${(e) => setCustomKbps(Math.max(500, Math.min(500000, +e.target.value || 0)))} />
+        ${[8000, 20000, 40000, 80000].map((k) => html`<button key=${k} class=${customKbps === k ? "chip on" : "chip"} disabled=${busy}
+          onClick=${() => setCustomKbps(k)}>${k / 1000}M</button>`)}
+      </div>
+    <//>`}
+    <p class="muted">${size.width}×${size.height} · ${fps} fps · ${quality === "custom" ? "" : "~"}${(bitrateFor(size.width, size.height, fps, quality, customKbps) / 1e6).toFixed(1)} Mbps (${Math.round(bitrateFor(size.width, size.height, fps, quality, customKbps) / 1000).toLocaleString()} kbps) · MP4 · ${fmt(projectDuration(p))}</p>
     ${phase === "idle" && html`<button class="primary wide" onClick=${run}>Start export</button>`}
     ${busy && html`<div class="bar"><div style=${{ width: `${progress * 100}%` }} /></div>
       <p class="status">${Math.round(progress * 100)}%</p>
@@ -642,6 +671,7 @@ function App() {
   useShortcuts(() => setDialog("shortcuts"), () => setDialog("export"));
   useEffect(() => {
     linkWebFonts();
+    loadRecentFonts();
     startAutosave();
     if (desktop) loadSystemFonts(); // the desktop app can list installed fonts without asking
     // Ctrl + wheel belongs to the timeline; never zoom the whole page.
@@ -649,7 +679,7 @@ function App() {
     window.addEventListener("wheel", noPageZoom, { passive: false });
     return () => window.removeEventListener("wheel", noPageZoom);
   }, []);
-  return html`<div class="app" style=${{ gridTemplateRows: `48px auto 1fr ${timelineH}px` }}>
+  return html`<div class="app" style=${{ gridTemplateRows: `48px auto minmax(0, 1fr) ${timelineH}px` }}>
     <${Header} onCaptions=${() => setDialog("captions")} onExport=${() => setDialog("export")} onShortcuts=${() => setDialog("shortcuts")} />
     <div><${RecoveryBar} /><${RelinkBar} /></div>
     <main>

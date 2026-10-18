@@ -36,6 +36,14 @@ export function bezierAt([x1, y1, x2, y2], x) {
 
 const EPS = 1 / 240;
 
+// New keyframes ease in and out ("smooth") unless the user switched that off; remembered per computer.
+let newEase = (() => { try { return localStorage.getItem("cutline.keyEase") || "easeInOut"; } catch { return "easeInOut"; } })();
+export const defaultEase = () => newEase;
+export function setDefaultEase(ease) {
+  newEase = ease;
+  try { localStorage.setItem("cutline.keyEase", ease); } catch { /* not saved */ }
+}
+
 export const keysOf = (item, prop) => item?.keyframes?.[prop] || [];
 export const hasKeys = (item, prop) => keysOf(item, prop).length > 0;
 export const animatedProps = (item) => Object.keys(item?.keyframes || {}).filter((p) => item.keyframes[p].length);
@@ -64,7 +72,7 @@ export function setKey(item, prop, t, v, ease) {
   const ks = (item.keyframes[prop] ??= []);
   const hit = ks.find((k) => Math.abs(k.t - t) < EPS);
   if (hit) { hit.v = v; if (ease !== undefined) hit.ease = ease; return; }
-  ks.push({ t: Math.max(0, t), v, ease: ease ?? "linear" });
+  ks.push({ t: Math.max(0, t), v, ease: ease ?? newEase });
   ks.sort((a, b) => a.t - b.t);
 }
 

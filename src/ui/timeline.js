@@ -5,6 +5,7 @@ import {
   compactTracks,
 } from "../store.js";
 import { clipSpeed, TRANSITIONS } from "../engine.js";
+import { hasCurve, sourceAt } from "../speed.js";
 import {
   pause, seek, splitAtPlayhead, deleteSelection, rippleDelete, duplicateSelection, addText, freezeFrame, splitItemAt,
   addMediaToTimeline, importFiles, clampZoom, zoomToFit, ZOOM_MIN, ZOOM_MAX, toast,
@@ -194,16 +195,15 @@ function Wave({ media, item, width, height }) {
     const x = c.getContext("2d");
     x.clearRect(0, 0, w, h);
     x.fillStyle = "rgba(255,255,255,.55)";
-    const speed = clipSpeed(item);
-    const from = (item.in || 0) * 100, span = item.dur * speed * 100;
     for (let px = 0; px < w; px++) {
-      const a = Math.floor(from + (px / w) * span), b = Math.max(a + 1, Math.floor(from + ((px + 1) / w) * span));
+      // Follows the clip's speed (and speed curve) so the waveform lines up with what plays.
+      const a = Math.floor(sourceAt(item, (px / w) * item.dur) * 100), b = Math.max(a + 1, Math.floor(sourceAt(item, ((px + 1) / w) * item.dur) * 100));
       let m = 0;
       for (let i = a; i < b && i < peaks.length; i++) if (peaks[i] > m) m = peaks[i];
       const bar = Math.max(1, m * h * 0.9);
       x.fillRect(px, (h - bar) / 2, 1, bar);
     }
-  }, [peaks, width, height, item.in, item.dur, item.speed]);
+  }, [peaks, width, height, item.in, item.dur, item.speed, item.speedCurve]);
   return html`<canvas ref=${ref} class="wave" />`;
 }
 
@@ -235,14 +235,17 @@ export function Timeline() {
   const total = Math.max(dur + Math.max(10, dur * 0.25), (viewW - LABEL) / zoom, 20);
 
   const tool = useStore((s) => s.tool);
-  const anchor = useRef(null);
+  const prevZoom = useRef(zoom);
+  // Track names stay pinned to the left edge while scrolling sideways (no re-render needed).
+  const pinLabels = () => inner.current?.style.setProperty("--sx", (scroller.current?.scrollLeft || 0) + "px");
+  useLayoutEffect(pinLabels);
 
   const timeAt = (clientX) => {
     const r = scroller.current.getBoundingClientRect();
     return (clientX - r.left + scroller.current.scrollLeft - LABEL) / zoom;
   };
 
-  // Ctrl/⌘ + mouse wheel (or a trackpad pinch) zooms around the pointer; Shift + wheel scrolls sideways.
+  // Ctrl/⌘ + mouse wheel (or a trackpad pinch) zooms; Shift + wheel scrolls sideways.
   useEffect(() => {
     const el = scroller.current;
     const onWheel = (e) => {
@@ -251,8 +254,6 @@ export function Timeline() {
         const z0 = getState().zoom;
         const z = clampZoom(z0 * Math.exp(-e.deltaY * 0.0025));
         if (z === z0) return;
-        const x = e.clientX - el.getBoundingClientRect().left;
-        anchor.current = { t: (x + el.scrollLeft - LABEL) / z0, x };
         setState({ zoom: z });
       } else if (e.shiftKey && !e.deltaX) {
         e.preventDefault();
@@ -262,12 +263,17 @@ export function Timeline() {
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
   }, []);
-  // Keep the moment under the pointer in place after a wheel zoom.
+  // Every zoom (wheel, slider, keys) keeps the playhead where it is on screen; if the playhead was out of
+  // view, it is brought to the middle.
   useLayoutEffect(() => {
-    const a = anchor.current;
-    if (!a) return;
-    anchor.current = null;
-    scroller.current.scrollLeft = Math.max(0, LABEL + a.t * zoom - a.x);
+    const z0 = prevZoom.current;
+    prevZoom.current = zoom;
+    if (z0 === zoom || getState().zoomFit) { setState({ zoomFit: false }); return; }
+    const el = scroller.current;
+    const t = getState().time;
+    const x = LABEL + t * z0 - el.scrollLeft; // playhead position on screen before the zoom
+    const visible = x >= LABEL && x <= el.clientWidth;
+    el.scrollLeft = Math.max(0, LABEL + t * zoom - (visible ? x : (el.clientWidth + LABEL) / 2));
   }, [zoom]);
 
   /** Hand tool (H) or middle mouse button: drag to pan. Razor tool (B): click a clip to cut it there. */
@@ -452,7 +458,7 @@ export function Timeline() {
       ${extra}
       <div class="handle l" onPointerDown=${trimLeft} />
       <span class=${kind === "overlay" ? "label" : ""}>${label}</span>
-      ${sp !== 1 && html`<b class="speed-badge">${+sp.toFixed(2)}×</b>`}
+      ${hasCurve(item) ? html`<b class="speed-badge" title="Speed curve">〰 curve</b>` : sp !== 1 && html`<b class="speed-badge">${+sp.toFixed(2)}×</b>`}
       ${keyMarks(item)}
       <div class="handle r" onPointerDown=${trimRight} />
     </div>`;
@@ -585,7 +591,7 @@ export function Timeline() {
         value=${Math.round((1000 * Math.log(zoom / ZOOM_MIN)) / Math.log(ZOOM_MAX / ZOOM_MIN))}
         onChange=${(e) => setState({ zoom: clampZoom(ZOOM_MIN * Math.pow(ZOOM_MAX / ZOOM_MIN, +e.target.value / 1000)) })} />
     </div>
-    <div class=${"tl-scroll" + (tool ? " tool-" + tool : "")} ref=${scroller}>
+    <div class=${"tl-scroll" + (tool ? " tool-" + tool : "")} ref=${scroller} onScroll=${pinLabels}>
       <div class="tl-inner" ref=${inner} style=${{ width: LABEL + total * zoom }} onPointerDownCapture=${onToolPointerDown} onPointerDown=${onTracksPointerDown}
         onDragOver=${onDragOver} onDragLeave=${(e) => { if (!inner.current.contains(e.relatedTarget)) setGhost(null); }} onDrop=${onDrop}
         onAuxClick=${(e) => e.button === 1 && e.preventDefault()}>
@@ -631,7 +637,7 @@ export function Timeline() {
                   }), { scroll: scroller.current });
                 }} />
                 <span class="label">${media?.name}</span>
-                ${sp !== 1 && html`<b class="speed-badge">${+sp.toFixed(2)}×</b>`}
+                ${hasCurve(s) ? html`<b class="speed-badge" title="Speed curve">〰 curve</b>` : sp !== 1 && html`<b class="speed-badge">${+sp.toFixed(2)}×</b>`}
                 ${fxBadges(s)}
                 ${keyMarks(s)}
                 <div class="handle r" onPointerDown=${(e) => dragGesture(e, (ev, dx) => editLive((p) => {

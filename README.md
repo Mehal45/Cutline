@@ -9,9 +9,11 @@ A free, open-source CapCut-style video editor for Windows and Mac. No account, n
 - **Auto-captions** (Whisper) and **text-to-speech** with 16 natural voices (Kokoro), both on-device
 - **Voice cleanup** (reduce noise, enhance voice, level loudness) and **13 voice effects** (chipmunk, robot, telephone…)
 - **Titles:** 32 built-in fonts plus every font installed on your computer, outline, shadow, background plate, letter spacing and 18 presets
+- **Speed curves:** smooth speed ramps (e.g. normal → fast → normal) with presets and an editable curve, plus one-click smooth (ease in & out) motion for keyframes
+- **Preview quality** Full / ½ / ¼ for smooth playback on slower computers (export is always full quality)
 - **Cut fast:** split, trim, ripple delete, merge, freeze frame, detach audio, speed 0.1–10×, magnetic snapping
 - **Blend modes, crop and flips** on any clip or layer
-- **Export** H.264, HEVC, AV1 or VP9 MP4 up to 4K 60 fps, plus WAV audio and PNG stills
+- **Export** H.264, HEVC, AV1 or VP9 MP4 up to 4K 60 fps at any bitrate (e.g. 40,000 kbps), plus WAV audio and PNG stills
 - **Projects** save and open as `.cutline` files, with autosave and crash recovery in the desktop app
 
 ## Install
