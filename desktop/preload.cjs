@@ -21,6 +21,12 @@ contextBridge.exposeInMainWorld("cutlineDesktop", {
   pendingOpen: () => ipcRenderer.invoke("cutline:pending-open"),
   /** Projects opened from Explorer while Cutline is already running. */
   onOpenFile: (cb) => ipcRenderer.on("cutline:open-file", (_e, f) => cb(f)),
+  /** Runs `cb` (may be async: it saves the project) before the window closes. */
+  onBeforeClose: (cb) => ipcRenderer.on("cutline:before-close", async () => {
+    try { await cb(); } catch { /* close anyway */ }
+    ipcRenderer.send("cutline:close-ready");
+  }),
+  untitledPath: () => ipcRenderer.invoke("cutline:untitled-path"),
   /** Recent projects (newest first), with `exists` for each file. */
   recentList: () => ipcRenderer.invoke("cutline:recent-list"),
   recentAdd: (entry) => ipcRenderer.invoke("cutline:recent-add", entry),

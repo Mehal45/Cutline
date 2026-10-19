@@ -27,7 +27,7 @@ A free, open-source CapCut-style video editor for Windows and Mac. No account, n
 - **Text animations and transitions** include Rise and Soft zoom (titles and captions), plus Zoom push, Zoom pull and Whip transitions
 - **Smooth motion export:** export 60 fps recordings at 90 or 120 fps with GPU motion interpolation (or frame blending), plus optional light motion blur (both off by default); also smooths slow motion
 - **Export** H.264, HEVC, AV1 or VP9 MP4 up to 4K 120 fps at any bitrate (e.g. 40,000 kbps), plus WAV audio and PNG stills
-- **Projects** save and open as `.cutline` files, with autosave and crash recovery in the desktop app
+- **Projects** save and open as `.cutline` files. The desktop app saves by itself: every 20 seconds, when you switch projects and when you close it (new projects go to Documents › Cutline Projects), and work from a crash comes back automatically. It opens on a Home screen of recent projects
 
 ## Install
 

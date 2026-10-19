@@ -124,8 +124,15 @@ export async function saveProject({ saveAs = false } = {}) {
   return true;
 }
 
+/** Before switching projects: the desktop app saves the current one; the browser asks. */
+async function leaveCurrent() {
+  if (!isDirty()) return true;
+  if (desktop) { await saveQuietly(); return true; }
+  return confirm("Discard unsaved changes to the current project?");
+}
+
 export async function openProject(file) {
-  if (isDirty() && !confirm("Discard unsaved changes to the current project?")) return;
+  if (!(await leaveCurrent())) return;
   try {
     if (desktop && !file) {
       const res = await desktop.openProject();
@@ -144,7 +151,7 @@ export async function openProject(file) {
 /** Opens a project Explorer handed to the desktop app ({ path, text }). */
 export async function openFromDisk(f) {
   if (!f) return;
-  if (isDirty() && !confirm("Discard unsaved changes to the current project?")) return;
+  if (!(await leaveCurrent())) return;
   try {
     const missing = await loadProject(f.text, f.path);
     toast(missing.length ? `Opened — ${missing.length} media file${missing.length > 1 ? "s" : ""} need relinking` : "Project opened");
@@ -153,8 +160,8 @@ export async function openFromDisk(f) {
   }
 }
 
-export function newProject() {
-  if (isDirty() && !confirm("Discard unsaved changes to the current project?")) return;
+export async function newProject() {
+  if (!(await leaveCurrent())) return;
   const project = { width: 1920, height: 1080, fps: 30, media: {}, main: [], texts: [], overlays: [], audio: [], effects: [] };
   resetCompounds();
   setState({ project, selection: [], time: 0, playing: false, canUndo: false, canRedo: false, relink: null });
@@ -168,11 +175,19 @@ export function newProject() {
 
 export const currentProjectPath = () => currentPath;
 
-/** Puts a project at the top of the recent list, then saves a small picture of the preview with it. */
+/**
+ * Puts a project at the top of the recent list with a small picture of the preview: taken after
+ * `thumbDelay` ms, right away (0, awaitable — used when saving on close) or not at all (-1).
+ */
 function rememberRecent(path, thumbDelay) {
   if (!desktop?.recentAdd) return;
   const name = path.split(/[\\/]/).pop().replace(/\.cutline$/i, "");
-  desktop.recentAdd({ path, name, dur: projectDuration(rootProject()) });
+  const entry = { path, name, dur: projectDuration(rootProject()) };
+  if (thumbDelay <= 0) {
+    const thumb = thumbDelay === 0 && previewThumb();
+    return desktop.recentAdd(thumb ? { ...entry, thumb } : entry);
+  }
+  desktop.recentAdd(entry);
   setTimeout(() => {
     const thumb = previewThumb();
     if (thumb && currentPath === path) desktop.recentAdd({ path, thumb, keepOrder: true });
@@ -204,6 +219,33 @@ export async function openRecent(path) {
 
 // ---------------- autosave & recovery (desktop) ----------------
 
+/**
+ * Saving without asking (desktop): to the project's own file, or, for an untitled project, to a new file in
+ * Documents > Cutline Projects (it then shows in Recent projects). Used on close, when switching projects and
+ * every 20 s for projects that already have a file.
+ */
+let saving = null;
+export function saveQuietly() {
+  if (!desktop || !isDirty()) return Promise.resolve(true);
+  saving ??= (async () => {
+    try {
+      const isNew = !currentPath;
+      const target = currentPath || (await desktop.untitledPath());
+      const snapshot = rootProject();
+      const path = await desktop.saveProject(await serialize(snapshot), target, projectName());
+      if (!path) return false;
+      currentPath = path;
+      savedSnapshot = snapshot;
+      desktop.setTitle(projectName());
+      desktop.clearAutosave();
+      setState({ autoSavedAt: Date.now() });
+      await rememberRecent(path, isNew ? 0 : -1);
+      return true;
+    } catch { return false; } finally { saving = null; }
+  })();
+  return saving;
+}
+
 let lastAuto = null;
 export function startAutosave() {
   if (!desktop) return;
@@ -211,11 +253,17 @@ export function startAutosave() {
     const p = rootProject();
     if (p === lastAuto || !hasContent(p) || !isDirty()) return;
     lastAuto = p;
+    if (currentPath) return saveQuietly();
+    // Untitled: a recovery copy (restored automatically if Cutline crashes); closing saves it properly.
     try { await desktop.autosave(await serialize(p)); setState({ autoSavedAt: Date.now() }); } catch { /* ignore */ }
   }, 20000);
-  window.addEventListener("beforeunload", (e) => {
-    if (isDirty()) { e.preventDefault(); e.returnValue = ""; }
-  });
+  desktop.onBeforeClose?.(() => saveQuietly());
+}
+
+/** Loads unsaved work left by a crash; it counts as unsaved, so closing saves it to a real file. */
+export async function restoreRecovery(text) {
+  await loadProject(text);
+  savedSnapshot = null;
 }
 
 export async function checkRecovery() {

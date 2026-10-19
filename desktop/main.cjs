@@ -107,6 +107,16 @@ async function sendOpen(p) {
 }
 app.on("open-file", (e, p) => { e.preventDefault(); sendOpen(p); }); // macOS
 
+// Untitled projects are saved on close to Documents > Cutline Projects > "Untitled project N.cutline".
+ipcMain.handle("cutline:untitled-path", async () => {
+  const dir = path.join(app.getPath("documents"), "Cutline Projects");
+  await fs.promises.mkdir(dir, { recursive: true });
+  for (let n = 1; ; n++) {
+    const p = path.join(dir, `Untitled project ${n}.cutline`);
+    if (!fs.existsSync(p)) return p;
+  }
+});
+
 // Recent projects: <userData>/recent.json, newest first: [{ path, name, dur, thumb, openedAt }].
 const recentPath = () => path.join(app.getPath("userData"), "recent.json");
 const samePath = (a, b) => (process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b);
@@ -226,13 +236,17 @@ async function createWindow() {
   win.webContents.on("will-navigate", (e, url) => {
     if (!url.startsWith(`http://127.0.0.1:${port}/`)) { e.preventDefault(); if (/^https?:/.test(url)) shell.openExternal(url); }
   });
-  // The page blocks closing while there are unsaved changes; ask the user here.
-  win.webContents.on("will-prevent-unload", (e) => {
-    const choice = dialog.showMessageBoxSync(win, {
-      type: "question", buttons: ["Close without saving", "Cancel"], defaultId: 1, cancelId: 1,
-      title: "Unsaved changes", message: "Close Cutline without saving?", detail: "Your project has changes that haven't been saved.",
-    });
-    if (choice === 0) e.preventDefault();
+  // Closing saves the project first (no questions): the page saves, says it's ready, then the window closes.
+  let closing = false;
+  win.on("close", (e) => {
+    if (closing) return;
+    e.preventDefault();
+    closing = true;
+    const w = win;
+    const done = () => { if (!w.isDestroyed()) w.destroy(); };
+    ipcMain.once("cutline:close-ready", done);
+    w.webContents.send("cutline:before-close");
+    setTimeout(done, 15000); // never hang on close
   });
   win.on("closed", () => { win = null; });
   await win.loadURL(`http://127.0.0.1:${port}/`);

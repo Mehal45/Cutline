@@ -28,7 +28,7 @@ import { EFFECT_CATEGORIES } from "./fx.js";
 import { linkWebFonts, loadProjectFonts, loadSystemFonts, loadRecentFonts } from "./ui/fonts.js";
 import { loadTextPresets, addDefaultText } from "./presets.js";
 import {
-  saveProject, openProject, newProject, relink, startAutosave, checkRecovery, loadProject, desktop, projectName, openFromDisk,
+  saveProject, openProject, newProject, relink, startAutosave, checkRecovery, restoreRecovery, loadProject, desktop, projectName, openFromDisk,
 } from "./project-io.js";
 
 const additiveKey = (e) => e.shiftKey || e.ctrlKey || e.metaKey;
@@ -723,8 +723,12 @@ function RecoveryBar() {
     (async () => {
       const f = await desktop?.pendingOpen?.();
       if (f) return openFromDisk(f);
+      // Unsaved work from a crash comes back by itself.
       const t = await checkRecovery();
-      if (t) setText(t);
+      if (t) {
+        try { await restoreRecovery(t); toast("Restored your unsaved work from last time"); }
+        catch { desktop?.clearAutosave(); }
+      }
     })();
     desktop?.onOpenFile?.((f) => openFromDisk(f));
   }, []);
