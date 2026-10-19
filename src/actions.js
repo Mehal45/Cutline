@@ -5,7 +5,7 @@ import {
 } from "./store.js";
 import { allVideoElements, clipSpeed, elementFor } from "./engine.js";
 import { resumeLive } from "./audiofx.js";
-import { splitKeyframes, shiftKeyframes, setKey, removeKey, keyAt, propAt, hasKeys, setStatic } from "./keyframes.js";
+import { splitKeyframes, shiftKeyframes, setKey, removeKey, removeKeysAt, keyAt, propAt, hasKeys, setStatic } from "./keyframes.js";
 import { EFFECTS, FILTERS } from "./fx.js";
 import { hasCurve, sourceAt, sourceSpan, subCurve, rampEnd, rampStart, startSpeed, endSpeed } from "./speed.js";
 
@@ -511,8 +511,17 @@ export function zoomToFit() {
 }
 
 export function deleteSelection() {
-  const { selection } = getState();
+  const { selection, selKey, project } = getState();
   if (!selection.length) return;
+  // A keyframe picked on the timeline (and the playhead still on it): Delete removes just that keyframe.
+  if (selKey && selection.length === 1 && selection[0].kind === selKey.kind && selection[0].id === selKey.id) {
+    const it = findItem(project, selKey.kind, selKey.id);
+    if (it && Math.abs(localTime(project, selKey.kind, it) - selKey.t) < 0.004) {
+      edit((p) => removeKeysAt(findItem(p, selKey.kind, selKey.id), selKey.t));
+      setState({ selKey: null });
+      return;
+    }
+  }
   const ids = (kind) => new Set(selection.filter((s) => s.kind === kind).map((s) => s.id));
   const main = ids("main"), texts = ids("text"), transitions = ids("transition");
   edit((p) => {
@@ -757,6 +766,37 @@ export function setAnimatable(kind, id, path, value, live = false) {
     else setStatic(it, path, value);
   };
   return live ? editLive(apply) : edit(apply);
+}
+
+/** What the "keyframe all" button keyframes together (with the value used when a property isn't set). */
+export const MOTION_PROPS = [["x", 0.5], ["y", 0.5], ["scale", 1], ["rotation", 0], ["opacity", 1]];
+
+/** True when position, scale, rotation and opacity all have a keyframe at the playhead. */
+export function allKeyedHere(project, kind, item, time = getState().time) {
+  const lt = localTime(project, kind, item, time);
+  return MOTION_PROPS.every(([k]) => keyAt(item, k, lt));
+}
+
+/**
+ * Like CapCut's keyframe button: one click keyframes position, scale, rotation and opacity together at the
+ * playhead; clicking again (all there) removes them.
+ */
+export function toggleAllKeyframes(kind, id) {
+  const p0 = getState().project;
+  const item = findItem(p0, kind, id);
+  if (!item) return;
+  const lt = localTime(p0, kind, item);
+  if (lt < -1e-3 || lt > item.dur + 1e-3) return toast("Move the playhead over the item first");
+  const t = Math.max(0, Math.min(item.dur, lt));
+  const all = allKeyedHere(p0, kind, item);
+  edit((p) => {
+    const it = findItem(p, kind, id);
+    for (const [k, fb] of MOTION_PROPS) {
+      if (all) removeKey(it, k, t);
+      else if (!keyAt(it, k, t)) setKey(it, k, t, propAt(it, k, t, fb));
+    }
+  });
+  toast(all ? "Removed the keyframes at the playhead" : "Keyframed position, scale, rotation and opacity");
 }
 
 /** Adds a keyframe at the playhead holding the current value, or removes the one that is there. */

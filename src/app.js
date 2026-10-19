@@ -782,7 +782,7 @@ function useShortcuts(openShortcuts, openExport) {
       const run = (fn) => { e.preventDefault(); fn(); };
       // While a library item is previewing, playback keys drive the preview.
       if (getState().preview && !mod) {
-        if (e.code === "Space") return run(toggleSource);
+        // (Space is handled by onSpace below.)
         if (key === "arrowleft") return run(() => stepSource(e.shiftKey ? -1 : -1 / fps));
         if (key === "arrowright") return run(() => stepSource(e.shiftKey ? 1 : 1 / fps));
         if (key === "i") return run(() => markSource("in"));
@@ -810,7 +810,7 @@ function useShortcuts(openShortcuts, openExport) {
       }
       if (e.altKey && key === "g") return run(createCompound);
       if (e.altKey) return;
-      if (e.code === "Space") return run(togglePlay);
+      if (e.code === "Space") return;
       if (key === "s") return run(splitAtPlayhead);
       if (key === "b") return run(() => { const on = getState().tool !== "razor"; setState({ tool: on ? "razor" : null }); toast(on ? "Razor: click a clip to cut it (B to exit)" : "Razor off"); });
       if (key === "h") return run(() => { const on = getState().tool !== "hand"; setState({ tool: on ? "hand" : null }); toast(on ? "Hand: drag the timeline to pan (H to exit)" : "Hand off"); });
@@ -835,7 +835,23 @@ function useShortcuts(openShortcuts, openExport) {
       if (key === "?") return run(openShortcuts);
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    // Space only ever plays / pauses (or the library preview), except while typing. It must not press a
+    // focused button, tick a checkbox or open a dropdown, so it's caught first and its default is stopped.
+    const typing = (el) => !!el?.closest?.("textarea, [contenteditable]:not([contenteditable=false])")
+      || (el?.tagName === "INPUT" && !/^(range|checkbox|radio|color|button|submit|reset|file)$/i.test(el.type));
+    const onSpace = (e) => {
+      if (e.code !== "Space" || e.ctrlKey || e.metaKey || e.altKey || typing(e.target)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.type === "keydown" && !e.repeat) (getState().preview ? toggleSource : togglePlay)();
+    };
+    window.addEventListener("keydown", onSpace, true);
+    window.addEventListener("keyup", onSpace, true);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keydown", onSpace, true);
+      window.removeEventListener("keyup", onSpace, true);
+    };
   }, []);
 }
 

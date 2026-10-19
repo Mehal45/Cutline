@@ -83,6 +83,23 @@ export function removeKey(item, prop, t) {
   if (!ks.length && item.keyframes) delete item.keyframes[prop];
 }
 
+/** Moves every keyframe at time `from` to time `to` (all properties together; mutates item). */
+export function moveKeyTime(item, from, to) {
+  for (const p of animatedProps(item)) {
+    const ks = item.keyframes[p];
+    const k = ks.find((x) => Math.abs(x.t - from) < EPS);
+    if (!k) continue;
+    item.keyframes[p] = ks.filter((x) => x === k || Math.abs(x.t - to) >= EPS); // it replaces one already there
+    k.t = Math.max(0, to);
+    item.keyframes[p].sort((a, b) => a.t - b.t);
+  }
+}
+
+/** Removes every keyframe at time t (all properties). */
+export function removeKeysAt(item, t) {
+  for (const p of animatedProps(item)) removeKey(item, p, t);
+}
+
 /** Sorted, de-duplicated times of every keyframe on the item. */
 export function keyTimes(item) {
   const out = [];

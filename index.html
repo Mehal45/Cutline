@@ -179,7 +179,11 @@
     .seg.muted { opacity: .55; }
     .seg .wave { position: absolute; left: 0; top: 4px; width: 100%; height: calc(100% - 8px); pointer-events: none; }
     .seg .badge { margin-left: 6px; font-size: 11px; opacity: .85; pointer-events: none; }
-    .kmark { position: absolute; bottom: 2px; width: 8px; height: 8px; background: #ffd400; transform: rotate(45deg); border: 1px solid #0006; pointer-events: none; }
+    .kmark { position: absolute; bottom: 2px; width: 12px; height: 12px; background: #ffd400; transform: rotate(45deg) scale(.75); border: 1px solid #0008; cursor: pointer; }
+    .keyall { padding: 3px 9px; font-size: 12px; border-radius: 12px; }
+    .keyall.on { border-color: #ffd400; color: #ffd400; }
+    .kmark:hover { transform: rotate(45deg) scale(.95); }
+    .kmark.on { background: #fff; box-shadow: 0 0 0 2px var(--accent); transform: rotate(45deg) scale(.95); }
     .snapline { position: absolute; top: 24px; bottom: 0; width: 1px; background: #ffd400; pointer-events: none; z-index: 4; }
     .tl-resize { height: 5px; margin-top: -3px; cursor: ns-resize; position: relative; z-index: 6; }
     .tl-resize:hover { background: var(--accent); }

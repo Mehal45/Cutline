@@ -13,6 +13,7 @@ A free, open-source CapCut-style video editor for Windows and Mac. No account, n
 - **Media kits** (desktop app): save the music, sound effects and clips you use in every video and add them all to the library with one click
 - **Text boxes:** titles stay on one straight line (Enter starts a new one); drag the side handles in the preview to set a text box width it wraps to, and the corners to resize
 - **Titles:** 32 built-in fonts plus every font installed on your computer, outline, shadow, background plate, letter spacing and 18 presets
+- **Keyframes:** click a keyframe on the timeline to jump to it and edit its values, drag it to move it, right-click or Delete to remove it; **Keyframe all** (Transform) keys position, scale, rotation and opacity together
 - **Speed curves:** smooth speed ramps (e.g. normal → fast → normal) with presets and an editable curve, plus one-click smooth (ease in & out) motion for keyframes
 - **Preview quality** Full / ½ / ¼ for smooth playback on slower computers (export is always full quality)
 - **Smooth preview** (⚡ in the viewer bar, off until you turn it on): light 720p copies of your videos are made in the background, so scrubbing, fast-forward and animations play smoothly even with OBS recordings. Building pauses while you play or export, and copies are reused next time (desktop app). Export always uses the originals

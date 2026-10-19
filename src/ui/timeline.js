@@ -13,7 +13,7 @@ import {
 } from "../actions.js";
 import { createCompound, openCompound, closeCompound, breakApart } from "../compound.js";
 import { saveElement, addElement } from "../elements.js";
-import { keyTimes, shiftKeyframes } from "../keyframes.js";
+import { keyTimes, shiftKeyframes, moveKeyTime, removeKeysAt } from "../keyframes.js";
 import { decodeMedia } from "../media-audio.js";
 import { addDefaultText } from "../presets.js";
 import { html, fmt, Icon } from "./kit.js";
@@ -264,6 +264,11 @@ export function Timeline() {
     return () => ro.disconnect();
   }, []);
   const segs = layoutMain(project);
+  // While the start of a main clip is being trimmed, it and the clips after it are drawn shifted by the
+  // trimmed amount, so the edge stays under the mouse (the ripple happens on release).
+  const trimShift = useStore((s) => s.mainTrimShift);
+  const shiftFrom = trimShift ? segs.findIndex((x) => x.id === trimShift.id) : -1;
+  const shiftPx = (i) => (shiftFrom >= 0 && i >= shiftFrom ? trimShift.px : 0);
   const dur = projectDuration(project);
   // Always room to drag past the end, and never narrower than the visible area at any zoom.
   const total = Math.max(dur + Math.max(10, dur * 0.25), (viewW - LABEL) / zoom, 20);
@@ -394,8 +399,36 @@ export function Timeline() {
     ? `${Math.floor(s / 3600)}:${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}:${String(Math.floor(s % 60)).padStart(2, "0")}`
     : fmt(s).slice(0, 5));
 
-  /** Keyframe markers along a segment. */
-  const keyMarks = (item) => keyTimes(item).map((t) => html`<i key=${t} class="kmark" style=${{ left: t * zoom - 4 }} />`);
+  /**
+   * Keyframe markers along an item. Click one to jump to it (its values show in the inspector, where changing
+   * them edits that keyframe), drag it to move it in time, right-click (or Delete) to remove it.
+   */
+  const keyMarks = (kind, item, start) => keyTimes(item).map((t) => {
+    const on = isSelected(kind, item.id) && Math.abs(time - (start + t)) < 0.004;
+    return html`<i key=${t} class=${"kmark" + (on ? " on" : "")} style=${{ left: t * zoom - 6 }}
+      title="Keyframe: click to edit it · drag to move it · right-click to delete it"
+      onPointerDown=${(e) => {
+        if (e.button !== 0) return;
+        select([{ kind, id: item.id }]);
+        seek(start + t);
+        setState({ selKey: { kind, id: item.id, t } });
+        const orig = structuredClone(item);
+        dragGesture(e, (ev, dx) => {
+          const nt = Math.max(0, Math.min(item.dur, t + dx / zoom));
+          editLive((p) => {
+            const it = findItem(p, kind, item.id);
+            it.keyframes = structuredClone(orig.keyframes);
+            moveKeyTime(it, t, nt);
+          });
+          setState({ selKey: { kind, id: item.id, t: nt } });
+          seek(start + nt);
+        }, { scroll: scroller.current });
+      }}
+      onContextMenu=${(e) => {
+        e.preventDefault(); e.stopPropagation();
+        edit((p) => removeKeysAt(findItem(p, kind, item.id), t));
+      }} />`;
+  });
 
   // ----- generic lane item (text / overlay / audio / effect) -----
   const laneItem = (kind, item, cls, label, extra) => {
@@ -503,7 +536,7 @@ export function Timeline() {
       <div class="handle l" title="Drag to trim or extend the start" onPointerDown=${trimLeft} />
       <span class=${kind === "overlay" ? "label" : ""}>${label}</span>
       ${hasCurve(item) ? html`<b class="speed-badge" title="Speed curve">〰 curve</b>` : sp !== 1 && html`<b class="speed-badge">${+sp.toFixed(2)}×</b>`}
-      ${keyMarks(item)}
+      ${keyMarks(kind, item, item.start)}
       <div class="handle r" title="Drag to trim or extend the end" onPointerDown=${trimRight} />
     </div>`;
   };
@@ -750,32 +783,36 @@ export function Timeline() {
             return html`<${React.Fragment} key=${s.id}>
               <div data-kind="main" data-id=${s.id}
                   class=${"seg clip" + (isSelected("main", s.id) ? " selected" : "") + (s.mute ? " muted" : "") + (media?.kind === "compound" ? " compound" : "")}
-                  style=${{ left: LABEL + s.start * zoom, width: Math.max(4, s.dur * zoom) }}
+                  style=${{ left: LABEL + s.start * zoom + shiftPx(i), width: Math.max(4, s.dur * zoom) }}
                   onPointerDown=${(e) => mainDrag(e, s, media)} onContextMenu=${(e) => clipMenu(e, "main", s)}
                   onDoubleClick=${() => media?.kind === "compound" && openCompound(media.id)}
                   title=${media?.kind === "compound" ? `${media.name} (compound clip): double-click to edit what's inside` : undefined}>
                 <div class="handle l" onPointerDown=${(e) => {
                   const orig = structuredClone(s);
-                  dragGesture(e, (ev, dx) => editLive((p) => {
+                  dragGesture(e, (ev, dx) => {
                     // Timeline seconds trimmed × speed = source seconds trimmed.
-                    const x = p.main.find((y) => y.id === s.id);
                     const cut = Math.max(-s.in / sp, Math.min(s.dur - 0.2, dx / zoom));
-                    x.in = s.in + cut * sp; x.dur = s.dur - cut;
-                    x.keyframes = orig.keyframes && structuredClone(orig.keyframes);
-                    if (x.keyframes) shiftKeyframes(x, -cut, x.dur);
-                  }), { scroll: scroller.current, tip: () => trimText("main", s.id) });
+                    editLive((p) => {
+                      const x = p.main.find((y) => y.id === s.id);
+                      x.in = s.in + cut * sp; x.dur = s.dur - cut;
+                      x.keyframes = orig.keyframes && structuredClone(orig.keyframes);
+                      if (x.keyframes) shiftKeyframes(x, -cut, x.dur);
+                    });
+                    // While dragging, the start edge follows the mouse (the gap closes when you let go).
+                    setState({ mainTrimShift: { id: s.id, px: cut * zoom } });
+                  }, { scroll: scroller.current, tip: () => trimText("main", s.id), onEnd: () => setState({ mainTrimShift: null }) });
                 }} title="Drag to trim or extend the start" />
                 <span class="label">${media?.kind === "compound" && html`<${Icon} n="layers" /> `}${media?.name}</span>
                 ${hasCurve(s) ? html`<b class="speed-badge" title="Speed curve">〰 curve</b>` : sp !== 1 && html`<b class="speed-badge">${+sp.toFixed(2)}×</b>`}
                 ${fxBadges(s)}
-                ${keyMarks(s)}
+                ${keyMarks("main", s, s.start)}
                 <div class="handle r" onPointerDown=${(e) => dragGesture(e, (ev, dx) => editLive((p) => {
                   p.main.find((y) => y.id === s.id).dur = Math.max(0.2, Math.min((maxSrc - s.in) / sp, s.dur + dx / zoom)); }), { scroll: scroller.current, tip: () => trimText("main", s.id) })}
                   title="Drag to trim or extend the end" />
               </div>
               ${i < segs.length - 1 && html`<div data-kind=${s.transition ? "transition" : undefined} data-id=${s.id}
                   class=${"diamond" + (s.transition ? " has" : "") + (isSelected("transition", s.id) ? " selected" : "")}
-                  style=${{ left: LABEL + (s.start + s.dur) * zoom }}
+                  style=${{ left: LABEL + (s.start + s.dur) * zoom + shiftPx(i) }}
                   title=${(s.transition ? TRANSITIONS[s.transition.type] : "Add transition") + " · right-click: smooth the speed at this cut"}
                   onContextMenu=${(e) => {
                     e.preventDefault(); e.stopPropagation();

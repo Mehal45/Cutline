@@ -5,7 +5,7 @@ import { clipSpeed, clipTransform, BLEND_MODES, ANIMATIONS, TRANSITIONS, itemBou
 import {
   deleteSelection, rippleDelete, copySelection, duplicateSelection, setClipSpeed, SPEED_PRESETS, freezeFrame,
   mergeClips, detachAudio, applyFilter, toast, setAnimatable, toggleKeyframe, localTime, mirrorSelection,
-  setTextSound, soundToAll,
+  setTextSound, soundToAll, toggleAllKeyframes, allKeyedHere,
 } from "../actions.js";
 import { ADJUST, FILTERS, EFFECTS, EFFECT_CATEGORIES } from "../fx.js";
 import { VOICE_EFFECTS } from "../audiofx.js";
@@ -154,6 +154,18 @@ function AlignRow({ kind, id }) {
   </div>`;
 }
 
+/** CapCut-style keyframe button: position, scale, rotation and opacity together, at the playhead. */
+function KeyAllButton({ kind, id }) {
+  const project = useStore((s) => s.project);
+  useStore((s) => s.time);
+  const item = findItem(project, kind, id);
+  if (!item) return null;
+  const on = allKeyedHere(project, kind, item);
+  return html`<button class=${"keyall" + (on ? " on" : "")} onClick=${() => toggleAllKeyframes(kind, id)}
+    title=${on ? "Remove the position, scale, rotation and opacity keyframes at the playhead" : "Add keyframes for position, scale, rotation and opacity at the playhead"}>
+    ◆ ${on ? "Keyframed" : "Keyframe all"}</button>`;
+}
+
 function TransformSection({ kind, id }) {
   const set = liveSet(kind, id);
   const isText = kind === "text";
@@ -162,7 +174,8 @@ function TransformSection({ kind, id }) {
     else s.transform = { x: 0.5, y: 0.5, scale: kind === "overlay" ? 0.45 : 1, rotation: 0 };
     if (s.keyframes) for (const k of ["x", "y", "scale", "rotation"]) delete s.keyframes[k];
   });
-  return html`<${Section} title="Transform" right=${html`<button class="ibtn" title="Reset position, size and rotation" onClick=${reset}><${Icon} n="rotate-ccw" /></button>`}>
+  return html`<${Section} title="Transform" right=${html`<span class="row"><${KeyAllButton} kind=${kind} id=${id} />
+      <button class="ibtn" title="Reset position, size and rotation" onClick=${reset}><${Icon} n="rotate-ccw" /></button></span>`}>
     <${KSlider} kind=${kind} id=${id} path="scale" label="Scale" min=${0.05} max=${4} fallback=${1} format=${pct} />
     <${PosRow} kind=${kind} id=${id} />
     <${KSlider} kind=${kind} id=${id} path="rotation" label="Rotate" min=${-180} max=${180} step=${1} fallback=${0} format=${deg} />
