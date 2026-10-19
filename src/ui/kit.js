@@ -53,6 +53,17 @@ export function numberMode(format) {
 }
 
 /**
+ * Volume sliders move in decibels (−60 dB … +20 dB) so quiet and loud settings get the same room on the
+ * slider; everything else is linear.
+ */
+const isDb = (format) => numberMode(format).unit === "dB";
+function rangeProps(format, min, max, step, v) {
+  if (!isDb(format)) return { min, max, step, value: v };
+  return { min: -60, max: Math.round(20 * Math.log10(max) * 10) / 10, step: 0.5, value: v < 0.001 ? -60 : 20 * Math.log10(v) };
+}
+const fromRange = (format, x) => (isDb(format) ? (x <= -60 ? 0 : Math.pow(10, x / 20)) : x);
+
+/**
  * A slider row for an animatable property, laid out label · slider · number · ‹ ◇ ›. The diamond adds or removes a
  * keyframe at the playhead; once a property has keyframes, changing the value edits the keyframe at the playhead.
  */
@@ -71,9 +82,9 @@ export function KSlider({ kind, id, path, label, min, max, step = 0.01, fallback
   const next = ks.find((k) => k.t > lt + 1e-3);
   return html`<div class="krow">
     <span class="klabel" title=${label}>${label}</span>
-    <input class="kslider" type="range" min=${min} max=${max} step=${step} value=${v}
+    <input class="kslider" type="range" ...${rangeProps(format, min, max, step, v)}
       onPointerDown=${() => checkpoint()} onKeyDown=${() => checkpoint()}
-      onChange=${(e) => setAnimatable(kind, id, path, +e.target.value, true)} />
+      onChange=${(e) => setAnimatable(kind, id, path, fromRange(format, +e.target.value), true)} />
     <${NumBox} value=${v} min=${min} max=${max} format=${format}
       onCommit=${(x) => { checkpoint(); setAnimatable(kind, id, path, x, true); }} />
     <span class="kkf">
@@ -101,8 +112,8 @@ export function NumBox({ value, min, max, format, onCommit }) {
 export function Slider({ label, value, min, max, step = 0.01, onChange, format = (v) => v.toFixed(2) }) {
   return html`<div class="krow plain">
     <span class="klabel" title=${label}>${label}</span>
-    <input class="kslider" type="range" min=${min} max=${max} step=${step} value=${value}
-      onPointerDown=${() => checkpoint()} onKeyDown=${() => checkpoint()} onChange=${(e) => onChange(+e.target.value, true)} />
+    <input class="kslider" type="range" ...${rangeProps(format, min, max, step, value)}
+      onPointerDown=${() => checkpoint()} onKeyDown=${() => checkpoint()} onChange=${(e) => onChange(fromRange(format, +e.target.value), true)} />
     <${NumBox} value=${value} min=${min} max=${max} format=${format} onCommit=${(v) => { checkpoint(); onChange(v, true); }} />
   </div>`;
 }

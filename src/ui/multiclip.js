@@ -60,8 +60,8 @@ function MultiAudio({ targets, items }) {
   // Louder / quieter by the same amount: each keeps its own level relative to the others.
   const nudge = (dbs) => editAll(targets, (it) => {
     const f = Math.pow(10, dbs / 20);
-    it.audio = { ...(it.audio || {}), volume: Math.max(0, Math.min(2, vol(it) * f)) };
-    for (const k of it.keyframes?.volume || []) k.v = Math.max(0, Math.min(2, k.v * f));
+    it.audio = { ...(it.audio || {}), volume: Math.max(0, Math.min(10, vol(it) * f)) };
+    for (const k of it.keyframes?.volume || []) k.v = Math.max(0, Math.min(10, k.v * f));
   });
   const allMuted = items.every((it) => it.mute);
   const fadeMax = Math.min(10, Math.min(...items.map((it) => it.dur)) / 2);
@@ -72,10 +72,10 @@ function MultiAudio({ targets, items }) {
   return html`<div>
     <${Section} title=${`Volume — ${items.length} clips`}>
       <label class="check"><input type="checkbox" checked=${allMuted} onChange=${(e) => editAll(targets, (it) => (it.mute = e.target.checked || undefined))} /> Mute all</label>
-      <${Slider} label="Volume" value=${v.value} min=${0} max=${2} format=${db} onChange=${setVolume} />
+      <${Slider} label="Volume" value=${v.value} min=${0} max=${10} format=${db} onChange=${setVolume} />
       <${Mixed} on=${v.mixed} what="volumes" />
       <div class="speed-chips" title="Each clip gets louder or quieter by the same amount, keeping their balance">
-        ${[-6, -3, -1, 1, 3, 6].map((d) => html`<button key=${d} class="chip" onClick=${() => nudge(d)}>${d > 0 ? "+" : ""}${d} dB</button>`)}
+        ${[-20, -10, -6, -3, -1, 1, 3, 6, 10, 20].map((d) => html`<button key=${d} class="chip" onClick=${() => nudge(d)}>${d > 0 ? "+" : ""}${d} dB</button>`)}
       </div>
       <${Slider} label="Fade in" value=${au("fadeIn").value || 0} min=${0} max=${fadeMax} step=${0.05} format=${(x) => x.toFixed(2) + "s"} onChange=${(x, l) => setFade("fadeIn", x, l)} />
       <${Slider} label="Fade out" value=${au("fadeOut").value || 0} min=${0} max=${fadeMax} step=${0.05} format=${(x) => x.toFixed(2) + "s"} onChange=${(x, l) => setFade("fadeOut", x, l)} />

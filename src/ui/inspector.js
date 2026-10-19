@@ -338,7 +338,7 @@ export function AudioSection({ kind, item, media }) {
   return html`<div>
     <${Section} title="Volume">
       <label class="check"><input type="checkbox" checked=${!!item.mute} onChange=${(e) => set((s) => (s.mute = e.target.checked || undefined))} /> Mute</label>
-      <${KSlider} kind=${kind} id=${item.id} path="volume" label="Volume" min=${0} max=${2} fallback=${au.volume ?? 1} format=${db} />
+      <${KSlider} kind=${kind} id=${item.id} path="volume" label="Volume" min=${0} max=${10} fallback=${au.volume ?? 1} format=${db} />
       <${Slider} label="Fade in" value=${au.fadeIn || 0} min=${0} max=${Math.min(10, item.dur / 2)} step=${0.05} format=${(v) => v.toFixed(2) + "s"} onChange=${(v, live) => setAu("fadeIn", v, live)} />
       <${Slider} label="Fade out" value=${au.fadeOut || 0} min=${0} max=${Math.min(10, item.dur / 2)} step=${0.05} format=${(v) => v.toFixed(2) + "s"} onChange=${(v, live) => setAu("fadeOut", v, live)} />
       <p class="muted">Above 100% plays louder in the preview and the export.</p>
@@ -482,7 +482,7 @@ function TextSoundSection({ t }) {
       ${(snd.when || "anim") === "anim" && html`<p class="muted">Plays as the text's in-animation finishes (${((t.anim?.in?.type !== "none" ? t.anim?.in?.dur || 0 : 0) * 0.85).toFixed(2)}s after it appears).</p>`}
       ${snd.when === "custom" && html`<${Slider} label="Delay after the text appears" value=${snd.delay || 0} min=${0} max=${Math.max(1, t.dur)} step=${0.01}
         format=${(v) => v.toFixed(2) + "s"} onChange=${(v, live) => setSnd("delay", v, live)} />`}
-      <${Slider} label="Volume" value=${snd.volume ?? 1} min=${0} max=${2} format=${db} onChange=${(v, live) => setSnd("volume", v, live)} />
+      <${Slider} label="Volume" value=${snd.volume ?? 1} min=${0} max=${10} format=${db} onChange=${(v, live) => setSnd("volume", v, live)} />
       <div class="grid2">
         <button onClick=${() => soundToAll(t.id, false)} title="Same sound, timing and volume on every text">Use on all texts</button>
         ${t.caption ? html`<button onClick=${() => soundToAll(t.id, true)}>Use on all captions</button>`
