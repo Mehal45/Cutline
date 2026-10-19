@@ -137,6 +137,11 @@
     .knob.ne { right: -7px; top: -7px; cursor: nesw-resize; } .knob.sw { left: -7px; bottom: -7px; cursor: nesw-resize; }
     .knob.e, .knob.w { top: 50%; width: 8px; height: 22px; margin-top: -11px; border-radius: 4px; cursor: ew-resize; }
     .knob.e { right: -5px; } .knob.w { left: -5px; }
+    .knob.n, .knob.s { left: 50%; width: 22px; height: 8px; margin-left: -11px; border-radius: 4px; cursor: ns-resize; }
+    .knob.n { top: -5px; } .knob.s { bottom: -5px; }
+    .mask-edge { fill: #fff; stroke: var(--accent); stroke-width: 2; pointer-events: all; }
+    .mask-edge.e-e, .mask-edge.e-w { cursor: ew-resize; } .mask-edge.e-n, .mask-edge.e-s { cursor: ns-resize; }
+    .mask-knob.c-ne, .mask-knob.c-sw { cursor: nesw-resize; }
     .rot { position: absolute; left: 50%; top: -30px; width: 14px; height: 14px; margin-left: -7px; border-radius: 50%; background: var(--accent); pointer-events: auto; cursor: grab; }
     .rot::after { content: ""; position: absolute; left: 6px; top: 14px; width: 2px; height: 16px; background: var(--accent); }
     .guide { position: absolute; background: #ff3b8d; pointer-events: none; }

@@ -107,6 +107,32 @@ export function MaskHandles({ kind, item, rect, overlay }) {
     drag(e, (ev) => { const p = toFrame(f, el(), ev); update((mm) => { mm.x = x0 + (p.x - p0.x) / f.fw; mm.y = y0 + (p.y - p0.y) / f.fh; }); });
   };
   const local = (ev) => rotate({ x: toFrame(f, el(), ev).x - b.cx, y: toFrame(f, el(), ev).y - b.cy }, -(m.rot || 0));
+  /**
+   * Stretching from an edge or corner ("e", "nw"…): the opposite side stays put. A square or circle pulled
+   * from an edge becomes a rectangle / ellipse; from a corner it stays square.
+   */
+  const startStretch = (e, sides) => {
+    const m0 = { ...m }, b0 = { ...b };
+    const keepSquare = sq && sides.length === 2;
+    drag(e, (ev) => {
+      const p = toFrame(f, el(), ev);
+      const q = rotate({ x: p.x - b0.cx, y: p.y - b0.cy }, -(m0.rot || 0));
+      let w = b0.w, h = b0.h;
+      if (sides.includes("e")) w = Math.max(8, q.x + b0.w / 2);
+      if (sides.includes("w")) w = Math.max(8, b0.w / 2 - q.x);
+      if (sides.includes("s")) h = Math.max(8, q.y + b0.h / 2);
+      if (sides.includes("n")) h = Math.max(8, b0.h / 2 - q.y);
+      if (keepSquare) w = h = Math.max(w, h);
+      const sx = sides.includes("e") ? (w - b0.w) / 2 : sides.includes("w") ? -(w - b0.w) / 2 : 0;
+      const sy = sides.includes("s") ? (h - b0.h) / 2 : sides.includes("n") ? -(h - b0.h) / 2 : 0;
+      const d = rotate({ x: sx, y: sy }, m0.rot || 0);
+      update((mm) => {
+        if (sq && !keepSquare) mm.shape = m0.shape === "square" ? "rect" : "ellipse";
+        mm.w = w / f.fw; mm.h = h / f.fh;
+        mm.x = m0.x + d.x / f.fw; mm.y = m0.y + d.y / f.fh;
+      });
+    });
+  };
   const startSize = (e) => drag(e, (ev) => {
     const q = local(ev);
     update((mm) => {
@@ -141,7 +167,11 @@ export function MaskHandles({ kind, item, rect, overlay }) {
       <g class="mask-outline">${outline}</g>
       <rect class="mask-body" x=${line ? -Math.min(L, 4000) : -b.w / 2} y=${line ? top - 10 : -b.h / 2} width=${line ? 2 * Math.min(L, 4000) : b.w}
         height=${line ? (m.shape === "band" ? b.h + 20 : 20) : b.h} onPointerDown=${startMove}><title>Drag to move the mask</title></rect>
-      ${!line && html`<circle class="mask-knob" cx=${b.w / 2} cy=${b.h / 2} r="7" onPointerDown=${startSize}><title>Drag to resize</title></circle>`}
+      ${!line && [["nw", -1, -1], ["ne", 1, -1], ["sw", -1, 1], ["se", 1, 1]].map(([k, x, y]) => html`<circle key=${k} class=${"mask-knob c-" + k} cx=${(x * b.w) / 2} cy=${(y * b.h) / 2} r="7"
+        onPointerDown=${(e) => startStretch(e, k)}><title>Drag to resize (the opposite corner stays)</title></circle>`)}
+      ${!line && [["n", 0, -1], ["s", 0, 1], ["e", 1, 0], ["w", -1, 0]].map(([k, x, y]) => html`<rect key=${k} class=${"mask-edge e-" + k}
+        x=${(x * b.w) / 2 - (x ? 4 : 11)} y=${(y * b.h) / 2 - (y ? 4 : 11)} width=${x ? 8 : 22} height=${y ? 8 : 22} rx="3"
+        onPointerDown=${(e) => startStretch(e, k)}><title>Drag to stretch ${x ? "the width" : "the height"}</title></rect>`)}
       ${m.shape === "band" && html`<circle class="mask-knob" cx="0" cy=${b.h / 2} r="7" onPointerDown=${startSize}><title>Drag to change the band's height</title></circle>`}
       <line class="mask-stem" x1="0" x2="0" y1=${top} y2=${top - 26} />
       <circle class="mask-knob rot" cx="0" cy=${top - 30} r="7" onPointerDown=${startRot}><title>Drag to rotate (Shift snaps to 15°)</title></circle>

@@ -477,6 +477,40 @@ function TransformOverlay({ rect }) {
     });
   };
 
+  /**
+   * Shapes: stretch from an edge (n / s / e / w) — the opposite edge stays put. Squares and circles become
+   * rectangles and ellipses when pulled out of shape.
+   */
+  const startStretch = (e, item, side) => {
+    const b = bounds("text", item);
+    const r = ref.current.getBoundingClientRect();
+    const k = W / r.width; // frame px per screen px
+    const scale = getXY("text", item).scale || 1;
+    const rad = (b.rotation * Math.PI) / 180;
+    const ux = Math.cos(rad), uy = Math.sin(rad); // the shape's own width axis on screen
+    const vx = -Math.sin(rad), vy = Math.cos(rad); // its height axis
+    const horiz = side === "e" || side === "w", sign = side === "e" || side === "s" ? 1 : -1;
+    const s0 = item.shape, eq = s0.type === "square" || s0.type === "circle";
+    const w0 = s0.w, h0 = eq ? s0.w : s0.h; // px on a 1920-wide frame
+    const toScreen = (v) => (v * (W / 1920) * scale) / k;
+    const half = toScreen(horiz ? w0 : h0) / 2;
+    const cx = r.left + b.cx * r.width, cy = r.top + b.cy * r.height;
+    // The edge that stays put.
+    const ox = cx - sign * (horiz ? ux : vx) * half, oy = cy - sign * (horiz ? uy : vy) * half;
+    dragGesture(e, (ev) => {
+      const d = Math.max(4, sign * ((ev.clientX - ox) * (horiz ? ux : vx) + (ev.clientY - oy) * (horiz ? uy : vy)));
+      const size = (d * k) / scale / (W / 1920);
+      const ncx = ox + sign * (horiz ? ux : vx) * (d / 2), ncy = oy + sign * (horiz ? uy : vy) * (d / 2);
+      editLive((p) => {
+        const t = p.texts.find((x) => x.id === item.id);
+        if (!t) return;
+        t.shape = { ...t.shape, ...(eq ? { type: s0.type === "square" ? "rect" : "ellipse", w: w0, h: h0 } : {}) };
+        if (horiz) t.shape.w = size; else t.shape.h = size;
+        setProps(p, "text", item.id, { x: (ncx - r.left) / r.width, y: (ncy - r.top) / r.height }, time);
+      });
+    });
+  };
+
   const startRotate = (e, kind, item) => {
     const b = bounds(kind, item);
     const r = ref.current.getBoundingClientRect();
@@ -512,6 +546,8 @@ function TransformOverlay({ rect }) {
           }}>
         ${single && ["nw", "ne", "sw", "se"].map((c) => html`<div key=${c} class=${"knob " + c}
           onPointerDown=${(e) => startScale(e, kind, item)} />`)}
+        ${single && item.shape && ["n", "s", "e", "w"].map((c) => html`<div key=${c} class=${"knob " + c} title=${`Drag to stretch the ${c === "n" || c === "s" ? "height" : "width"}`}
+          onPointerDown=${(e) => startStretch(e, item, c)} />`)}
         ${single && kind === "text" && !item.shape && ["w", "e"].map((c) => html`<div key=${c} class=${"knob " + c} title="Drag to make the text box wider or narrower (wider = fewer lines)"
           onPointerDown=${(e) => startBoxWidth(e, item)} />`)}
         ${single && html`<div class="rot" title="Rotate (Shift snaps to 15°)" onPointerDown=${(e) => startRotate(e, kind, item)} />`}
