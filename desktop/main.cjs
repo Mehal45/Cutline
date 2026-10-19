@@ -107,6 +107,39 @@ async function sendOpen(p) {
 }
 app.on("open-file", (e, p) => { e.preventDefault(); sendOpen(p); }); // macOS
 
+// Recent projects: <userData>/recent.json, newest first: [{ path, name, dur, thumb, openedAt }].
+const recentPath = () => path.join(app.getPath("userData"), "recent.json");
+const samePath = (a, b) => (process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b);
+const readRecent = async () => { try { return JSON.parse(await fs.promises.readFile(recentPath(), "utf8")); } catch { return []; } };
+let recentQueue = Promise.resolve();
+/** Changes the list one at a time (an "opened" and a later "thumbnail" update never overwrite each other). */
+const changeRecent = (fn) => (recentQueue = recentQueue.then(async () => {
+  const next = fn(await readRecent());
+  await fs.promises.writeFile(recentPath(), JSON.stringify(next), "utf8");
+}).catch(() => {}));
+ipcMain.handle("cutline:recent-list", async () => {
+  await recentQueue;
+  return Promise.all((await readRecent()).map(async (r) => {
+    try { const st = await fs.promises.stat(r.path); return { ...r, exists: true, modified: st.mtimeMs }; } catch { return { ...r, exists: false }; }
+  }));
+});
+ipcMain.handle("cutline:recent-add", (_e, entry) => {
+  if (typeof entry?.path !== "string" || !path.isAbsolute(entry.path)) return;
+  return changeRecent((list) => {
+    const old = list.find((r) => samePath(r.path, entry.path));
+    const next = { ...old, ...entry };
+    if (!entry.keepOrder) next.openedAt = Date.now();
+    delete next.keepOrder;
+    return entry.keepOrder && old ? list.map((r) => (r === old ? next : r)) : [next, ...list.filter((r) => r !== old)].slice(0, 40);
+  });
+});
+ipcMain.handle("cutline:recent-remove", (_e, p) => changeRecent((list) => list.filter((r) => !samePath(r.path, String(p)))));
+ipcMain.handle("cutline:open-path", async (_e, p) => {
+  if (typeof p !== "string" || !/\.cutline$/i.test(p)) return null;
+  try { return await readProject(p); } catch { return null; }
+});
+ipcMain.handle("cutline:show-in-folder", (_e, p) => { if (typeof p === "string" && fs.existsSync(p)) shell.showItemInFolder(p); });
+
 // Big recordings are scanned once (frame index + sound) on a worker thread; see scan.cjs.
 const { getScan } = require("./scan.cjs");
 ipcMain.handle("cutline:scan", async (e, src) => {

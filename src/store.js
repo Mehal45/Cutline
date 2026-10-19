@@ -29,6 +29,7 @@ export const defaultTextStyle = () => ({
 const initial = {
   project: { width: 1920, height: 1080, fps: 30, media: {}, main: [], texts: [], overlays: [], audio: [], effects: [] },
   selection: [], // [{ kind: "main"|"text"|"transition", id }]
+  home: typeof window !== "undefined" && !!window.cutlineDesktop, // the desktop app starts on the Home screen (recent projects)
   time: 0,
   playing: false,
   zoom: 80, // px per second

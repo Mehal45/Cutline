@@ -19,6 +19,7 @@ import { html, fmt, Field, Icon, Slider, secs } from "./ui/kit.js";
 import { startProxies, setProxyMode } from "./proxy.js";
 import { rootProject, createCompound } from "./compound.js";
 import { Inspector } from "./ui/inspector.js";
+import { Home } from "./ui/home.js";
 import { Timeline, dragGesture } from "./ui/timeline.js";
 import {
   EffectsTab, FiltersTab, AudioTab, TextTab, AdjustmentTab, AudioPresetsTab, MediaKitsTab, ElementsTab,
@@ -113,6 +114,7 @@ function MainMenu({ onShortcuts, onExport }) {
     <button class="menu-btn" onClick=${() => setOpen(!open)}>Menu <${Icon} n="chevron-down" /></button>
     <input ref=${input} type="file" accept=".cutline,application/json" hidden onChange=${(e) => { const f = e.target.files[0]; e.target.value = ""; if (f) openProject(f); }} />
     ${open && html`<div class="menu-list">
+      ${desktop && html`<button onClick=${run(() => setState({ home: true }))}>Home (recent projects)</button>`}
       <button onClick=${run(newProject)}>New project <kbd>Ctrl+W</kbd></button>
       <button onClick=${run(() => (desktop ? openProject() : input.current.click()))}>Open… <kbd>Ctrl+O</kbd></button>
       <button onClick=${run(() => saveProject())}>Save <kbd>Ctrl+S</kbd></button>
@@ -818,6 +820,7 @@ function useShortcuts(openShortcuts, openExport) {
 function App() {
   const [dialog, setDialog] = useState(null);
   const timelineH = useStore((s) => s.timelineH);
+  const home = useStore((s) => s.home);
   useShortcuts(() => setDialog("shortcuts"), () => setDialog("export"));
   useEffect(() => {
     linkWebFonts();
@@ -830,15 +833,16 @@ function App() {
     window.addEventListener("wheel", noPageZoom, { passive: false });
     return () => window.removeEventListener("wheel", noPageZoom);
   }, []);
-  return html`<div class="app" style=${{ gridTemplateRows: `38px auto minmax(0, 1fr) ${timelineH}px` }}>
+  return html`<div class="app" style=${{ gridTemplateRows: home ? "38px auto minmax(0, 1fr)" : `38px auto minmax(0, 1fr) ${timelineH}px` }}>
     <${Header} onExport=${() => setDialog("export")} onShortcuts=${() => setDialog("shortcuts")} />
-    <div><${RecoveryBar} /><${RelinkBar} /></div>
+    <div><${RecoveryBar} />${!home && html`<${RelinkBar} />`}</div>
+    ${home ? html`<${Home} />` : html`
     <main>
       <${LeftPanel} />
       <${Player} />
       <${Inspector} />
     </main>
-    <${Timeline} />
+    <${Timeline} />`}
     <${Toast} />
     <input id="import-any" type="file" multiple accept="video/*,image/*,audio/*" hidden
       onChange=${(e) => { importFiles([...e.target.files]); e.target.value = ""; }} />

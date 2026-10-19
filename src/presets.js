@@ -64,6 +64,31 @@ async function savePreset(kind, item, name, keys, extra = {}) {
 /** Adjustment layer: its effects, filter, colour adjustments, mix and length. */
 export const saveAdjustPreset = (item, name) => savePreset("adjust", item, name, ADJUST_LOOK);
 
+/** A clip's filter, colour adjustments and effects, saved as an adjustment preset. */
+export async function saveClipLookPreset(item, name) {
+  const look = Object.fromEntries(["filter", "adjust", "fx"].filter((k) => item[k]).map((k) => [k, item[k]]));
+  await savePreset("adjust", look, name, ["filter", "adjust", "fx"]);
+}
+
+/**
+ * Gives clips an adjustment preset's filter, colour and effects (replacing theirs).
+ * Targets default to the selected clips; with none selected it adds an adjustment layer instead.
+ */
+export function applyAdjustPreset(preset, targets) {
+  targets ??= getState().selection.filter((s) => s.kind === "main" || s.kind === "overlay");
+  if (!targets.length) return addAdjustFromPreset(preset);
+  const look = preset.look;
+  edit((p) => targets.forEach((t) => {
+    const it = findItem(p, t.kind, t.id);
+    if (!it) return;
+    it.filter = look.filter ? structuredClone(look.filter) : null;
+    if (look.adjust) it.adjust = structuredClone(look.adjust); else delete it.adjust;
+    it.fx = (look.fx || []).map((f) => ({ ...structuredClone(f), id: uid() })); // own ids per clip
+    if (it.keyframes) for (const k of Object.keys(it.keyframes)) if (k.startsWith("adjust.") || k.startsWith("fx.") || k === "filter.amount") delete it.keyframes[k];
+  }));
+  toast(`Applied “${preset.name}” to ${targets.length} clip${targets.length > 1 ? "s" : ""}`);
+}
+
 /** Audio settings of a clip, layer or audio item (not its timing). */
 export async function saveAudioPreset(item, name) {
   const audio = Object.fromEntries(AUDIO_KEYS.filter((k) => item.audio?.[k] !== undefined).map((k) => [k, item.audio[k]]));

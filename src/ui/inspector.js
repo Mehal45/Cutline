@@ -17,7 +17,8 @@ import { FONTS, loadFont, familyCss, canListSystemFonts, loadSystemFonts, rememb
 import { SpeedCurveEditor } from "./speedcurve.js";
 import { hasCurve } from "../speed.js";
 import { setDefaultEase, defaultEase, propAt, hasKeys, keyAt } from "../keyframes.js";
-import { saveTextPreset, saveAdjustPreset, saveAudioPreset, presetsOf, applyAudioPreset } from "../presets.js";
+import { saveTextPreset, saveAdjustPreset, saveAudioPreset, presetsOf, applyAudioPreset, applyAdjustPreset, saveClipLookPreset } from "../presets.js";
+import { MultiClipInspector, PresetButtons, SavePresetButton } from "./multiclip.js";
 
 /** "Save as preset": keeps this text's whole look for one-click reuse (Text tab › My presets). */
 function SavePreset({ t, save: saveFn, label = "Save as preset", hint = "Save font, size, colour, shadow, position, animation and length" }) {
@@ -412,7 +413,13 @@ function VisualInspector({ kind, item, project }) {
     ${t === "audio" && html`<${AudioSection} kind=${kind} item=${item} media=${media} />`}
     ${t === "speed" && html`<${SpeedFields} speed=${clipSpeed(item)} ids=${[item.id]} kind=${kind} id=${item.id} />`}
     ${t === "animation" && html`<${AnimateSection} kind=${kind} item=${item} />`}
-    ${t === "adjust" && html`<${FilterSection} kind=${kind} item=${item} /><${AdjustSection} kind=${kind} item=${item} />`}
+    ${t === "adjust" && html`
+      <${Section} title="Adjustment presets">
+        <${PresetButtons} kind="adjust" onUse=${(p) => applyAdjustPreset(p, [{ kind, id: item.id }])}
+          empty="No adjustment presets yet. Set a filter, colour or effects and save them here." />
+        <${SavePresetButton} label="Save as adjustment preset" onSave=${(name) => saveClipLookPreset(findItem(getState().project, kind, item.id), name)} />
+      <//>
+      <${FilterSection} kind=${kind} item=${item} /><${AdjustSection} kind=${kind} item=${item} />`}
   <//>`;
 }
 
@@ -663,6 +670,11 @@ export function Inspector() {
   const selection = useStore((s) => s.selection);
 
   if (selection.length > 1) {
+    const textSel = selection.filter((s) => s.kind === "text").map((s) => project.texts.find((x) => x.id === s.id)).filter(Boolean);
+    if (selection.some((s) => ["main", "overlay", "audio"].includes(s.kind))) {
+      const textPanel = textSel.length > 0 && html`<${MultiTextFields} key=${textSel.map((x) => x.id).join()} texts=${textSel} />`;
+      return html`<${MultiClipInspector} selection=${selection} project=${project} textPanel=${textPanel} Shell=${Shell} />`;
+    }
     const clipIds = selection.filter((s) => s.kind === "main" || s.kind === "overlay").map((s) => s.id);
     const first = clipIds.map((id) => project.main.find((s) => s.id === id) || project.overlays.find((s) => s.id === id)).find(Boolean);
     const texts = selection.filter((s) => s.kind === "text").map((s) => project.texts.find((x) => x.id === s.id)).filter(Boolean);

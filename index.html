@@ -228,6 +228,29 @@
     .menu-list button { text-align: left; border: 0; background: transparent; display: flex; justify-content: space-between; }
     .menu-list button:hover { background: var(--panel2); }
     .menu-list hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; width: 100%; }
+    .home { display: grid; grid-template-columns: 260px 1fr; min-height: 0; background: var(--bg); }
+    .home h2 { font-size: 15px; margin: 4px 0 14px; font-weight: 800; }
+    .home-side { padding: 24px 20px; border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; gap: 10px; }
+    .home-big { display: flex; align-items: center; gap: 8px; padding: 11px 14px; font-size: 14px; text-align: left; }
+    .home-big kbd { margin-left: auto; opacity: .6; font-size: 11px; }
+    .home-main { padding: 24px 28px; overflow: auto; min-height: 0; }
+    .home-search { width: 240px; }
+    .home-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
+    .home-card { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; cursor: pointer; }
+    .home-card:hover { border-color: var(--accent); }
+    .home-card.gone { opacity: .5; cursor: default; }
+    .home-card.gone:hover { border-color: var(--line); }
+    .home-card.busy { pointer-events: none; }
+    .home-thumb { aspect-ratio: 16 / 9; background: #000; display: grid; place-items: center; position: relative; color: var(--muted); font-size: 28px; }
+    .home-thumb img { width: 100%; height: 100%; object-fit: cover; }
+    .home-dur { position: absolute; right: 6px; bottom: 6px; background: rgba(0,0,0,.7); color: #fff; font-size: 11px; padding: 1px 6px; border-radius: 4px; }
+    .home-opening { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.6); color: #fff; font-size: 13px; }
+    .home-info { display: grid; gap: 2px; padding: 8px 10px 10px; }
+    .home-info b { font-size: 13px; }
+    .home-path { font-size: 11px; opacity: .8; }
+    .home-btns { position: absolute; top: 6px; right: 6px; display: none; gap: 4px; }
+    .home-card:hover .home-btns { display: flex; }
+    .home-btns .ibtn { background: rgba(0,0,0,.7); border-color: transparent; }
     .relink { display: flex; gap: 10px; align-items: center; padding: 6px 12px; background: #3b2a0a; border-bottom: 1px solid #6b4b12; }
     .relink span { flex: 1; }
     .tl-scroll.tool-razor .seg, .tl-scroll.tool-razor .seg * { cursor: crosshair; }

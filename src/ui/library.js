@@ -9,7 +9,7 @@ import { addElement } from "../elements.js";
 import { TTS_VOICES, speak, ttsStatus } from "../tts.js";
 import {
   addTextFromPreset, addDefaultText, deleteTextPreset, renameTextPreset, toggleDefaultPreset, applyPresetToSelection,
-  addAdjustFromPreset, applyAudioPreset, saveMediaKit, setKitFiles, importKit,
+  addAdjustFromPreset, applyAdjustPreset, applyAudioPreset, saveMediaKit, setKitFiles, importKit,
 } from "../presets.js";
 import { VOICE_EFFECTS } from "../audiofx.js";
 
@@ -79,6 +79,7 @@ export function EffectsTab({ cat: fixedCat }) {
 }
 
 export function AdjustmentTab() {
+  const clips = useStore((s) => s.selection.filter((x) => x.kind === "main" || x.kind === "overlay").length);
   return html`<div>
     <b class="lib-title">Adjustment layer</b>
     <p class="muted">An adjustment layer colours, filters and adds effects to everything under it on the timeline, for as long as it lasts.</p>
@@ -87,7 +88,9 @@ export function AdjustmentTab() {
       empty="Select an adjustment layer on the timeline and press “Save as preset” to keep its effects, filter and colour settings here."
       describe=${(p) => [p.look.filter?.type && "filter", (p.look.fx || []).length && `${p.look.fx.length} effect${p.look.fx.length > 1 ? "s" : ""}`,
         p.look.adjust && Object.values(p.look.adjust).some((v) => v) && "colour"].filter(Boolean).join(" · ") || "adjustment"}
-      onUse=${addAdjustFromPreset} useTitle="Add at the playhead" />
+      onUse=${(p) => applyAdjustPreset(p)}
+      useTitle=${clips ? `Apply to the ${clips} selected clip${clips > 1 ? "s" : ""}` : "Add as an adjustment layer at the playhead (select clips first to apply it to them)"} />
+    <p class="muted">${clips ? `Click a preset to apply it to the ${clips} selected clip${clips > 1 ? "s" : ""}.` : "Tip: select clips on the timeline first, then click a preset to apply it to all of them."}</p>
   </div>`;
 }
 

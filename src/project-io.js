@@ -2,7 +2,7 @@
 //
 // A project file is JSON: the timeline plus a list of media. Media that came from disk is stored by its
 // path (desktop app) or name (browser); media Cutline made itself (freeze frames, voice-overs) is embedded.
-import { getState, setState } from "./store.js";
+import { getState, setState, projectDuration } from "./store.js";
 import { toast } from "./actions.js";
 import { rootProject, resetCompounds } from "./compound.js";
 
@@ -80,6 +80,8 @@ export async function loadProject(text, path = null) {
   savedSnapshot = project;
   currentPath = path;
   desktop?.setTitle(projectName());
+  setState({ home: false });
+  if (path) rememberRecent(path, 2500);
   return missing;
 }
 
@@ -108,6 +110,7 @@ export async function saveProject({ saveAs = false } = {}) {
     currentPath = path;
     desktop.setTitle(projectName());
     desktop.clearAutosave();
+    rememberRecent(path, 0);
   } else {
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([json], { type: "application/json" }));
@@ -158,6 +161,45 @@ export function newProject() {
   savedSnapshot = project;
   currentPath = null;
   desktop?.setTitle(projectName());
+  setState({ home: false });
+}
+
+// ---------------- recent projects (desktop) ----------------
+
+export const currentProjectPath = () => currentPath;
+
+/** Puts a project at the top of the recent list, then saves a small picture of the preview with it. */
+function rememberRecent(path, thumbDelay) {
+  if (!desktop?.recentAdd) return;
+  const name = path.split(/[\\/]/).pop().replace(/\.cutline$/i, "");
+  desktop.recentAdd({ path, name, dur: projectDuration(rootProject()) });
+  setTimeout(() => {
+    const thumb = previewThumb();
+    if (thumb && currentPath === path) desktop.recentAdd({ path, thumb, keepOrder: true });
+  }, thumbDelay);
+}
+
+/** A 320-px JPEG of the preview canvas, or null if it's blank. */
+function previewThumb() {
+  const src = document.querySelector(".player .stage canvas");
+  if (!src || !src.width) return null;
+  const c = document.createElement("canvas");
+  c.width = 320; c.height = Math.round((320 * src.height) / src.width);
+  const g = c.getContext("2d");
+  g.drawImage(src, 0, 0, c.width, c.height);
+  const px = g.getImageData(0, 0, c.width, c.height).data;
+  let sum = 0;
+  for (let i = 0; i < px.length; i += 64) sum += px[i] + px[i + 1] + px[i + 2];
+  if (sum / (px.length / 64) < 12) return null; // all black: nothing drawn yet
+  return c.toDataURL("image/jpeg", 0.72);
+}
+
+/** Opens a project from its path (recent list). */
+export async function openRecent(path) {
+  const f = await desktop?.openPath?.(path);
+  if (!f) { toast("That project file can't be found any more"); return false; }
+  await openFromDisk(f);
+  return true;
 }
 
 // ---------------- autosave & recovery (desktop) ----------------

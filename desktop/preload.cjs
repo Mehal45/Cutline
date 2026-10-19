@@ -21,6 +21,12 @@ contextBridge.exposeInMainWorld("cutlineDesktop", {
   pendingOpen: () => ipcRenderer.invoke("cutline:pending-open"),
   /** Projects opened from Explorer while Cutline is already running. */
   onOpenFile: (cb) => ipcRenderer.on("cutline:open-file", (_e, f) => cb(f)),
+  /** Recent projects (newest first), with `exists` for each file. */
+  recentList: () => ipcRenderer.invoke("cutline:recent-list"),
+  recentAdd: (entry) => ipcRenderer.invoke("cutline:recent-add", entry),
+  recentRemove: (path) => ipcRenderer.invoke("cutline:recent-remove", path),
+  openPath: (path) => ipcRenderer.invoke("cutline:open-path", path),
+  showInFolder: (path) => ipcRenderer.invoke("cutline:show-in-folder", path),
   /** Frame index + sound of a big MKV recording (scanned once, then cached): { index, audioPath }. */
   scan: (src) => ipcRenderer.invoke("cutline:scan", src),
   onScanProgress: (cb) => ipcRenderer.on("cutline:scan-progress", (_e, m) => cb(m)),
