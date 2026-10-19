@@ -20,7 +20,7 @@ import { startProxies, setProxyMode } from "./proxy.js";
 import { rootProject, createCompound } from "./compound.js";
 import { Inspector } from "./ui/inspector.js";
 import { Home } from "./ui/home.js";
-import { Timeline, dragGesture } from "./ui/timeline.js";
+import { Timeline, dragGesture, setToggle } from "./ui/timeline.js";
 import {
   EffectsTab, FiltersTab, AudioTab, TextTab, AdjustmentTab, AudioPresetsTab, MediaKitsTab, ElementsTab,
 } from "./ui/library.js";
@@ -32,7 +32,7 @@ import {
 } from "./project-io.js";
 
 const additiveKey = (e) => e.shiftKey || e.ctrlKey || e.metaKey;
-setState({ snap: true, timelineH: Math.max(260, Math.min(460, Math.round(window.innerHeight * 0.38))), previewQuality: (() => { try { return +localStorage.getItem("cutline.previewQuality") || 1; } catch { return 1; } })() });
+setState({ snap: true, ...(() => { try { return JSON.parse(localStorage.getItem("cutline.timelineToggles") || "{}"); } catch { return {}; } })(), timelineH: Math.max(260, Math.min(460, Math.round(window.innerHeight * 0.38))), previewQuality: (() => { try { return +localStorage.getItem("cutline.previewQuality") || 1; } catch { return 1; } })() });
 
 startProxies();
 import("./decode.js").then((d) => d.startScans(getState, setState));
@@ -67,7 +67,7 @@ function startRenderLoop(canvas) {
       const dur = projectDuration(s.project);
       if (t >= dur) { t = dur; pause(); }
       setState({ time: t });
-    }
+    } else if (s.hoverTime != null) t = s.hoverTime; // preview axis: show the moment under the mouse
     syncMedia(s.project, t, s.playing);
     // At a cut the next clip's player may still be seeking: keep the last frame on screen for a moment
     // (never more than ~0.4 s) rather than flash a wrong frame.
@@ -821,7 +821,7 @@ function useShortcuts(openShortcuts, openExport) {
       if (key === "q") return run(() => trimToPlayhead("left"));
       if (key === "w") return run(() => trimToPlayhead("right"));
       if (key === "v" || key === "a") return run(() => setState({ tool: null }));
-      if (key === "n") return run(() => { setState({ snap: !getState().snap }); toast(getState().snap ? "Snapping on" : "Snapping off"); });
+      if (key === "n") return run(() => { setToggle("snap", !getState().snap); toast(getState().snap ? "Snapping on" : "Snapping off"); });
       if ((key === "delete" || key === "backspace") && e.shiftKey) return run(rippleDelete);
       if (key === "delete" || key === "backspace") return run(deleteSelection);
       if (key === "escape") return run(() => { if (getState().tool) setState({ tool: null }); else select([]); });

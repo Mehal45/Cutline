@@ -59,6 +59,7 @@ const writeAll = (list) => savePresetList(list);
 function mainIndexAt(project, t) {
   let start = 0, index = 0;
   for (const s of project.main) {
+    start += s.gap || 0;
     if (start + s.dur / 2 < t) index++;
     start += s.dur;
   }

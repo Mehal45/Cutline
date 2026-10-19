@@ -192,9 +192,10 @@ export function activeClips(project, t) {
     const seg = segs[i];
     const end = seg.start + seg.dur;
     // A transition straddles the cut between seg and the next one: [cut - d/2, cut + d/2].
-    const tr = seg.transition && segs[i + 1] ? seg.transition : null;
+    // No transition across empty space (main track magnet off).
+    const tr = seg.transition && segs[i + 1] && !segs[i + 1].gap ? seg.transition : null;
     const half = tr ? tr.dur / 2 : 0;
-    const prevTr = i > 0 && segs[i - 1].transition ? segs[i - 1].transition.dur / 2 : 0;
+    const prevTr = i > 0 && segs[i - 1].transition && !seg.gap ? segs[i - 1].transition.dur / 2 : 0;
     if (t >= seg.start - prevTr && t < end + half) {
       const local = Math.max(0, Math.min(seg.dur - 1e-3, t - seg.start));
       out.push({ seg, index: i, local, sourceTime: sourceAt(seg, local) });

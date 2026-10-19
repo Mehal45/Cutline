@@ -2,7 +2,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   useStore, getState, setState, edit, editLive, checkpoint, undo, redo, layoutMain, projectDuration, isSelected, select, findItem,
-  compactTracks, trackFlags, toggleTrackFlag,
+  compactTracks, trackFlags, toggleTrackFlag, removeMain, closeMainGaps,
 } from "../store.js";
 import { clipSpeed, TRANSITIONS } from "../engine.js";
 import { hasCurve, sourceAt } from "../speed.js";
@@ -16,6 +16,7 @@ import { saveElement, addElement } from "../elements.js";
 import { keyTimes, shiftKeyframes, moveKeyTime, removeKeysAt } from "../keyframes.js";
 import { decodeMedia } from "../media-audio.js";
 import { addDefaultText } from "../presets.js";
+import { startReplace, ReplaceDialog } from "./replace.js";
 import { html, fmt, Icon } from "./kit.js";
 
 const additiveKey = (e) => e.shiftKey || e.ctrlKey || e.metaKey;
@@ -100,6 +101,7 @@ function mainIndexAt(project, t, skipId) {
   let start = 0, index = 0;
   for (const s of project.main) {
     if (s.id === skipId) continue;
+    start += s.gap || 0;
     if (start + s.dur / 2 < t) index++;
     start += s.dur;
   }
@@ -111,10 +113,32 @@ function mainBoundary(project, index, skipId) {
   let t = 0, i = 0;
   for (const s of project.main) {
     if (s.id === skipId) continue;
+    t += s.gap || 0;
     if (i++ === index) break;
     t += s.dur;
   }
   return t;
+}
+
+/**
+ * Main track magnet off: moves a main clip to start at time t, leaving empty space where it was. Dropped on
+ * another clip it goes right after that clip; clips after it only move if it doesn't fit in the space.
+ */
+function placeMainAt(p, id, t) {
+  const clip = p.main.find((x) => x.id === id);
+  removeMain(p, new Set([id]), true);
+  const segs = layoutMain(p);
+  let idx = segs.filter((s) => s.start < t).length;
+  const prevEnd = idx > 0 ? segs[idx - 1].start + segs[idx - 1].dur : 0;
+  t = Math.max(t, prevEnd);
+  clip.transition = null;
+  if (t - prevEnd > 1e-4) clip.gap = t - prevEnd; else delete clip.gap;
+  const next = p.main[idx];
+  if (next) {
+    const g = segs[idx].start - (t + clip.dur);
+    if (g > 1e-4) next.gap = g; else delete next.gap;
+  }
+  p.main.splice(idx, 0, clip);
 }
 
 // ---------------- snapping ----------------
@@ -122,7 +146,7 @@ function mainBoundary(project, index, skipId) {
 /** Edges an item can snap to: playhead, cuts on the main track and the edges of every other item. */
 function snapPoints(project, skipIds) {
   const pts = [getState().time, 0];
-  for (const s of layoutMain(project)) pts.push(s.start, s.start + s.dur);
+  for (const s of layoutMain(project)) if (!skipIds.has(s.id)) pts.push(s.start, s.start + s.dur);
   for (const lane of ["texts", "overlays", "audio", "effects"]) {
     for (const x of project[lane] || []) if (!skipIds.has(x.id)) pts.push(x.start, x.start + x.dur);
   }
@@ -250,6 +274,9 @@ export function Timeline() {
   const canUndo = useStore((s) => s.canUndo);
   const canRedo = useStore((s) => s.canRedo);
   const snap = useStore((s) => s.snap);
+  const mainMagnet = useStore((s) => s.mainMagnet !== false);
+  const linkage = useStore((s) => s.linkage !== false);
+  const previewAxis = useStore((s) => !!s.previewAxis);
   const snapAt = useStore((s) => s.snapAt);
   useStore((s) => s.selection); // re-render on selection change
   const scroller = useRef();
@@ -560,7 +587,12 @@ export function Timeline() {
         const r = el ? el.getBoundingClientRect() : null;
         return r ? { top: r.top - ir.top + 6, height: r.height - 12 } : { top: ev.clientY - ir.top - 20, height: 40 };
       };
-      if (row.type === "main" || row.type === "below" || row.type === "audio") {
+      if ((row.type === "main" || row.type === "below" || row.type === "audio") && getState().mainMagnet === false) {
+        // Main track magnet off: the clip goes exactly where it's dropped (the space it leaves stays empty).
+        const at = snapMove(t, s.dur, snapPoints(p, new Set([s.id])), zoom).t;
+        drop = { to: "main", time: Math.max(0, at) };
+        setGhost({ ...box("main"), left: LABEL + drop.time * zoom, width: Math.max(4, s.dur * zoom), label: media?.name, lane: "main" });
+      } else if (row.type === "main" || row.type === "below" || row.type === "audio") {
         const index = mainIndexAt(p, timeAt(ev.clientX), s.id);
         drop = { to: "main", index };
         setGhost({ ...box("main"), left: LABEL + t * zoom, width: Math.max(4, s.dur * zoom), label: media?.name, line: LABEL + mainBoundary(p, index, s.id) * zoom, lane: "main" });
@@ -578,7 +610,10 @@ export function Timeline() {
         if (!drop) return;
         const p = getState().project;
         const from = p.main.findIndex((x) => x.id === s.id);
-        if (drop.to === "main") {
+        if (drop.to === "main" && drop.time != null) {
+          if (Math.abs(drop.time - layoutMain(p)[from].start) < 1e-3) return;
+          edit((d) => placeMainAt(d, s.id, drop.time));
+        } else if (drop.to === "main") {
           if (drop.index === from) return; // dropped where it was
           edit((d) => {
             const [clip] = d.main.splice(d.main.findIndex((x) => x.id === s.id), 1);
@@ -641,6 +676,22 @@ export function Timeline() {
     e.preventDefault();
     const t = Math.max(0, timeAt(e.clientX));
     const row = rowAt(e.clientX, e.clientY);
+    // A video or picture dropped onto a clip: offer to replace that clip.
+    const onClip = e.target.closest?.('[data-kind="main"], [data-kind="overlay"]');
+    if (onClip && dropped && dropped.kind !== "audio" && !dropped.missing) {
+      const kind = onClip.dataset.kind, target = onClip.dataset.id;
+      const insert = () => kind === "main"
+        ? addMediaToTimeline(dropped, "main", { index: mainIndexAt(getState().project, t, null), range: { in: 0, dur: dropped.duration } })
+        : addMediaToTimeline(dropped, "overlay", { time: t, track: row.track, range: { in: 0, dur: dropped.duration } });
+      select([{ kind, id: target }]);
+      setState({ ctxMenu: { x: e.clientX, y: e.clientY, items: [
+        { heading: `“${dropped.name}”` },
+        { label: "Replace clip", icon: "replace", onClick: () => startReplace(kind, target, id) },
+        { label: kind === "main" ? "Insert here" : "Add as a new layer here", icon: "plus", onClick: insert },
+        { label: "Cancel", icon: "x", onClick: () => {} },
+      ] } });
+      return;
+    }
     const ids = id ? [id] : await importFiles(files);
     let offset = 0;
     for (const mid of ids) {
@@ -741,7 +792,16 @@ export function Timeline() {
       <button class="ibtn" onClick=${detachAudio} title="Detach audio to its own track"><${Icon} n="audio-lines" /></button>
       <button class="ibtn" onClick=${() => addDefaultText()} title="Add text (T) — uses your ★ default preset if set"><${Icon} n="type" /></button>
       <span class="spacer"></span>
-      <button class=${"ibtn" + (snap ? " on" : "")} onClick=${() => setState({ snap: !snap })} title="Magnetic snapping (N)"><${Icon} n="magnet" /></button>
+      <span class="tgroup tl-toggles">
+        <button class=${"ibtn" + (mainMagnet ? " on" : "")} onClick=${toggleMainMagnet}
+          title=${"Main track magnet: " + (mainMagnet ? "ON — main-track clips always stay joined" : "OFF — deleting, trimming or moving a main clip leaves empty space") + ". Click to turn " + (mainMagnet ? "off" : "on (closes the gaps)")}><${Icon} n="magnet" /></button>
+        <button class=${"ibtn" + (snap ? " on" : "")} onClick=${() => setToggle("snap", !snap)}
+          title=${"Auto snapping (N): " + (snap ? "ON — clips snap to the playhead and other clips' edges" : "OFF")}><${Icon} n="fold-horizontal" /></button>
+        <button class=${"ibtn" + (linkage ? " on" : "")} onClick=${() => setToggle("linkage", !linkage)}
+          title=${"Linkage: " + (linkage ? "ON — texts, layers, audio and effects move with the main clip they sit on" : "OFF — only what you drag moves")}><${Icon} n=${linkage ? "link-2" : "unlink-2"} /></button>
+        <button class=${"ibtn" + (previewAxis ? " on" : "")} onClick=${() => setToggle("previewAxis", !previewAxis)}
+          title=${"Preview axis: " + (previewAxis ? "ON — hover over the timeline to preview that moment" : "OFF")}><${Icon} n="scan-eye" /></button>
+      </span>
       <span class="sep"></span>
       <button class="ibtn" onClick=${() => zoomTimeline(1 / 1.25)} title="Zoom out (−, Ctrl + wheel)"><${Icon} n="zoom-out" /></button>
       <input class="zoom" type="range" min="0" max="1000" title="Zoom (Ctrl + mouse wheel)"
@@ -753,7 +813,14 @@ export function Timeline() {
     <div class=${"tl-scroll" + (tool ? " tool-" + tool : "")} ref=${scroller} onScroll=${pinLabels}>
       <div class="tl-inner" ref=${inner} style=${{ width: LABEL + total * zoom }} onPointerDownCapture=${onToolPointerDown} onPointerDown=${onTracksPointerDown}
         onDragOver=${onDragOver} onDragLeave=${(e) => { if (!inner.current.contains(e.relatedTarget)) setGhost(null); }} onDrop=${onDrop}
-        onAuxClick=${(e) => e.button === 1 && e.preventDefault()}>
+        onAuxClick=${(e) => e.button === 1 && e.preventDefault()}
+        onPointerMove=${(e) => {
+          const s = getState();
+          if (!s.previewAxis || s.playing || e.buttons) { if (s.hoverTime != null) setState({ hoverTime: null }); return; }
+          const t = timeAt(e.clientX);
+          setState({ hoverTime: t >= 0 ? Math.min(t, projectDuration(s.project)) : null });
+        }}
+        onPointerLeave=${() => getState().hoverTime != null && setState({ hoverTime: null })}>
         <div class="ruler" onPointerDown=${(e) => { e.stopPropagation(); scrub(e); }}>
           ${ticks.map((s) => html`<div class="tick" key=${s} style=${{ left: LABEL + s * zoom }}>${tickLabel(s)}</div>`)}
         </div>
@@ -789,28 +856,39 @@ export function Timeline() {
                   title=${media?.kind === "compound" ? `${media.name} (compound clip): double-click to edit what's inside` : undefined}>
                 <div class="handle l" onPointerDown=${(e) => {
                   const orig = structuredClone(s);
+                  const free = getState().mainMagnet === false; // magnet off: the end stays put and a gap opens
                   dragGesture(e, (ev, dx) => {
                     // Timeline seconds trimmed × speed = source seconds trimmed.
-                    const cut = Math.max(-s.in / sp, Math.min(s.dur - 0.2, dx / zoom));
+                    const cut = Math.max(-s.in / sp, free ? -(s.gap || 0) : -Infinity, Math.min(s.dur - 0.2, dx / zoom));
                     editLive((p) => {
                       const x = p.main.find((y) => y.id === s.id);
                       x.in = s.in + cut * sp; x.dur = s.dur - cut;
+                      if (free) { if ((s.gap || 0) + cut > 1e-4) x.gap = (s.gap || 0) + cut; else delete x.gap; }
                       x.keyframes = orig.keyframes && structuredClone(orig.keyframes);
                       if (x.keyframes) shiftKeyframes(x, -cut, x.dur);
                     });
                     // While dragging, the start edge follows the mouse (the gap closes when you let go).
-                    setState({ mainTrimShift: { id: s.id, px: cut * zoom } });
+                    if (!free) setState({ mainTrimShift: { id: s.id, px: cut * zoom } });
                   }, { scroll: scroller.current, tip: () => trimText("main", s.id), onEnd: () => setState({ mainTrimShift: null }) });
                 }} title="Drag to trim or extend the start" />
                 <span class="label">${media?.kind === "compound" && html`<${Icon} n="layers" /> `}${media?.name}</span>
                 ${hasCurve(s) ? html`<b class="speed-badge" title="Speed curve">〰 curve</b>` : sp !== 1 && html`<b class="speed-badge">${+sp.toFixed(2)}×</b>`}
                 ${fxBadges(s)}
                 ${keyMarks("main", s, s.start)}
-                <div class="handle r" onPointerDown=${(e) => dragGesture(e, (ev, dx) => editLive((p) => {
-                  p.main.find((y) => y.id === s.id).dur = Math.max(0.2, Math.min((maxSrc - s.in) / sp, s.dur + dx / zoom)); }), { scroll: scroller.current, tip: () => trimText("main", s.id) })}
+                <div class="handle r" onPointerDown=${(e) => {
+                  // Magnet off: the next clip stays where it is (its gap grows or shrinks instead).
+                  const next = getState().mainMagnet === false ? project.main[i + 1] : null;
+                  const room = next ? next.gap || 0 : Infinity;
+                  dragGesture(e, (ev, dx) => editLive((p) => {
+                    const dur = Math.max(0.2, Math.min((maxSrc - s.in) / sp, s.dur + room, s.dur + dx / zoom));
+                    p.main.find((y) => y.id === s.id).dur = dur;
+                    const n = next && p.main.find((y) => y.id === next.id);
+                    if (n) { const g = (next.gap || 0) + s.dur - dur; if (g > 1e-4) n.gap = g; else delete n.gap; }
+                  }), { scroll: scroller.current, tip: () => trimText("main", s.id) });
+                }}
                   title="Drag to trim or extend the end" />
               </div>
-              ${i < segs.length - 1 && html`<div data-kind=${s.transition ? "transition" : undefined} data-id=${s.id}
+              ${i < segs.length - 1 && !segs[i + 1].gap && html`<div data-kind=${s.transition ? "transition" : undefined} data-id=${s.id}
                   class=${"diamond" + (s.transition ? " has" : "") + (isSelected("transition", s.id) ? " selected" : "")}
                   style=${{ left: LABEL + (s.start + s.dur) * zoom + shiftPx(i) }}
                   title=${(s.transition ? TRANSITIONS[s.transition.type] : "Add transition") + " · right-click: smooth the speed at this cut"}
@@ -847,8 +925,10 @@ export function Timeline() {
         ${ghost?.line != null && html`<div class="insert-line" style=${{ left: ghost.line }} />`}
         ${ghost?.width != null && html`<div class=${"drag-ghost " + ghost.lane} style=${{ left: ghost.left, top: ghost.top, width: ghost.width, height: ghost.height }}>${ghost.label}</div>`}
         ${snapAt != null && html`<div class="snapline" style=${{ left: LABEL + snapAt * zoom }} />`}
+        <${HoverLine} />
         <${TrimTip} />
         <${ContextMenu} />
+        <${ReplaceDialog} />
         <div class="playhead" style=${{ left: LABEL + time * zoom }} />
       </div>
     </div>
@@ -856,6 +936,27 @@ export function Timeline() {
 }
 
 /** Right-click menu: state.ctxMenu = { x, y, items: [{ label, icon, onClick, disabled } | "-" | { heading }] }. */
+/** Timeline toggles (magnet, snapping, linkage, preview axis), remembered between sessions. */
+export function setToggle(key, on) {
+  setState({ [key]: on, ...(key === "previewAxis" && !on ? { hoverTime: null } : {}) });
+  const s = getState();
+  try { localStorage.setItem("cutline.timelineToggles", JSON.stringify({ snap: s.snap, mainMagnet: s.mainMagnet !== false, linkage: s.linkage !== false, previewAxis: !!s.previewAxis })); } catch { /* ignore */ }
+}
+
+function toggleMainMagnet() {
+  const on = getState().mainMagnet === false;
+  setToggle("mainMagnet", on);
+  if (on && getState().project.main.some((s) => s.gap)) { edit(closeMainGaps); toast("Main track magnet on: gaps closed"); }
+  else toast(on ? "Main track magnet on" : "Main track magnet off: removing or moving a clip now leaves a gap");
+}
+
+/** Preview axis: the line under the mouse; the player shows that moment while you hover. */
+function HoverLine() {
+  const t = useStore((s) => s.hoverTime);
+  const zoom = useStore((s) => s.zoom);
+  return t == null ? null : html`<div class="hover-line" style=${{ left: LABEL + t * zoom }} />`;
+}
+
 function ContextMenu() {
   const menu = useStore((s) => s.ctxMenu);
   useEffect(() => {

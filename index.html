@@ -184,6 +184,16 @@
     .keyall.on { border-color: #ffd400; color: #ffd400; }
     .kmark:hover { transform: rotate(45deg) scale(.95); }
     .kmark.on { background: #fff; box-shadow: 0 0 0 2px var(--accent); transform: rotate(45deg) scale(.95); }
+    .hover-line { position: absolute; top: 0; bottom: 0; width: 1px; background: #ffd400aa; pointer-events: none; z-index: 6; }
+    .tl-toggles .ibtn.on { color: var(--accent); }
+    .replace-dlg { width: min(640px, 94vw); }
+    .replace-dlg h3 { display: flex; align-items: center; gap: 6px; }
+    .rp-video { width: 100%; max-height: 300px; background: #000; border-radius: 6px; display: block; margin: 8px 0; cursor: pointer; }
+    .rp-strip { position: relative; height: 34px; background: repeating-linear-gradient(90deg, #2a2d36 0 9px, #23262e 9px 18px); border-radius: 5px; cursor: pointer; user-select: none; touch-action: none; }
+    .rp-win { position: absolute; top: 0; bottom: 0; background: #ffd40033; border: 2px solid #ffd400; border-radius: 5px; cursor: grab; box-sizing: border-box; }
+    .rp-times { margin: 6px 0 10px; }
+    .replace-dlg .warn { color: #ffb347; }
+    .row.end { justify-content: flex-end; gap: 8px; }
     .snapline { position: absolute; top: 24px; bottom: 0; width: 1px; background: #ffd400; pointer-events: none; z-index: 4; }
     .tl-resize { height: 5px; margin-top: -3px; cursor: ns-resize; position: relative; z-index: 6; }
     .tl-resize:hover { background: var(--accent); }

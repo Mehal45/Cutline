@@ -163,6 +163,7 @@ export function breakApart(kind, id) {
       const i = d.main.findIndex((x) => x.id === id);
       const inner = seq.main.map(fresh);
       if (inner.length) inner[inner.length - 1].transition = c.transition || null;
+      if (inner.length && c.gap) inner[0].gap = (inner[0].gap || 0) + c.gap;
       d.main.splice(i, 1, ...inner);
       inner.forEach((x) => ids.push({ kind: "main", id: x.id }));
       // Keep everything after it in place if the inner main track is shorter than the compound clip.

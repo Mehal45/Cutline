@@ -55,6 +55,7 @@ const historyFlags = () => ({ canUndo: past.length > 0, canRedo: future.length >
 export function edit(fn) {
   const draft = structuredCloneProject(state.project);
   fn(draft);
+  linkToMain(state.project, draft);
   past.push(state.project);
   if (past.length > 100) past.shift();
   future.length = 0;
@@ -99,6 +100,7 @@ export function select(items, additive = false) {
 export function editLive(fn) {
   const draft = structuredCloneProject(state.project);
   fn(draft);
+  linkToMain(state.project, draft);
   setState({ project: draft });
 }
 
@@ -139,10 +141,59 @@ export function useStore(selector) {
 
 // ---- derived timeline helpers ----
 
+/**
+ * Linkage (timeline toggle, on by default): texts, layers, audio and effects sit on a main-track clip and
+ * move with it when that clip moves (clips before it deleted, trimmed, reordered…). Items lying entirely
+ * inside a deleted clip go with it. Items the edit itself moved are left alone.
+ */
+function linkToMain(prev, next) {
+  if (state.linkage === false || !prev?.main || !next?.main) return;
+  const before = layoutMain(prev);
+  const after = new Map(layoutMain(next).map((s) => [s.id, s]));
+  if (before.every((s) => after.get(s.id)?.start === s.start)) return;
+  for (const lane of ["texts", "overlays", "audio", "effects"]) {
+    if (!next[lane] || !prev[lane]) continue;
+    const old = new Map(prev[lane].map((x) => [x.id, x]));
+    next[lane] = next[lane].filter((x) => {
+      const o = old.get(x.id);
+      if (!o || o.start !== x.start) return true;
+      const host = before.find((s) => o.start >= s.start - 1e-6 && o.start < s.start + s.dur - 1e-6);
+      if (!host) return true;
+      const now = after.get(host.id);
+      if (!now) return !(o.start + o.dur <= host.start + host.dur + 1e-3); // its clip was deleted
+      const d = now.start - host.start;
+      if (Math.abs(d) < 1e-9) return true;
+      const shift = Math.max(d, -x.start);
+      x.start += shift;
+      if (x.words) x.words = x.words.map((w) => ({ ...w, t0: w.t0 + shift, t1: w.t1 + shift }));
+      return true;
+    });
+  }
+}
+
+/**
+ * Removes main-track clips. With the main track magnet off, the space they took stays empty
+ * (added to the gap before the next clip) so nothing after them moves.
+ */
+export function removeMain(p, ids, keepGap = state.mainMagnet === false) {
+  let carry = 0;
+  p.main = p.main.filter((s) => {
+    if (ids.has(s.id)) { if (keepGap) carry += (s.gap || 0) + s.dur; return false; }
+    if (carry) { s.gap = (s.gap || 0) + carry; carry = 0; }
+    return true;
+  });
+}
+
+/** Removes all empty space from the main track (turning the magnet on). */
+export function closeMainGaps(p) {
+  for (const s of p.main) delete s.gap;
+}
+
 /** Main-track segments with their computed timeline start. */
 export function layoutMain(project) {
   let t = 0;
   return project.main.map((seg) => {
+    t += seg.gap || 0; // empty space before the clip (main track magnet off)
     const out = { ...seg, start: t };
     t += seg.dur;
     return out;
@@ -150,7 +201,7 @@ export function layoutMain(project) {
 }
 
 export function projectDuration(project) {
-  const mainEnd = project.main.reduce((a, s) => a + s.dur, 0);
+  const mainEnd = project.main.reduce((a, s) => a + (s.gap || 0) + s.dur, 0);
   const end = (list) => (list || []).reduce((a, t) => Math.max(a, t.start + t.dur), 0);
   return Math.max(mainEnd, end(project.texts), end(project.overlays), end(project.audio), end(project.effects));
 }

@@ -1,6 +1,6 @@
 // Editing commands shared by buttons, keyboard shortcuts and the preview overlay.
 import {
-  getState, setState, edit, editLive, uid, layoutMain, projectDuration, defaultTextStyle, LANES, findItem, freeTrack,
+  getState, setState, edit, editLive, uid, layoutMain, projectDuration, removeMain, defaultTextStyle, LANES, findItem, freeTrack,
   compactTracks,
 } from "./store.js";
 import { allVideoElements, clipSpeed, elementFor } from "./engine.js";
@@ -332,6 +332,7 @@ function splitMain(p, seg, time) {
   const a = p.main[i];
   const local = time - seg.start;
   const b = { ...structuredClone(a), id: uid(), in: sourceAt(a, local), dur: a.dur - local };
+  delete b.gap;
   b.anim = { in: { ...a.anim.in, type: "none" }, out: a.anim.out };
   if (a.keyframes) [a.keyframes, b.keyframes] = splitKeyframes(a, local);
   splitCurve(a, b, local);
@@ -383,6 +384,7 @@ export function trimToPlayhead(side) {
   }
   if (!targets.length) return toast("Select a clip under the playhead first");
   let n = 0;
+  const free = getState().mainMagnet === false; // magnet off: the removed part stays as empty space
   edit((p) => {
     const segs = layoutMain(p);
     for (const t of targets) {
@@ -391,6 +393,10 @@ export function trimToPlayhead(side) {
       const start = t.kind === "main" ? segs.find((s) => s.id === t.id)?.start : it.start;
       const local = time - start;
       if (local <= 0.02 || local >= it.dur - 0.02) continue;
+      if (free && t.kind === "main") {
+        if (side === "left") it.gap = (it.gap || 0) + local;
+        else { const next = p.main[p.main.indexOf(it) + 1]; if (next) next.gap = (next.gap || 0) + it.dur - local; }
+      }
       if (side === "left") {
         if ("in" in it || t.kind === "main") it.in = sourceAt(it, local);
         if (it.keyframes) shiftKeyframes(it, -local, it.dur - local);
@@ -525,7 +531,7 @@ export function deleteSelection() {
   const ids = (kind) => new Set(selection.filter((s) => s.kind === kind).map((s) => s.id));
   const main = ids("main"), texts = ids("text"), transitions = ids("transition");
   edit((p) => {
-    p.main = p.main.filter((s) => !main.has(s.id));
+    removeMain(p, main);
     p.texts = p.texts.filter((t) => !texts.has(t.id));
     for (const k of ["overlay", "audio", "effect"]) { const set = ids(k); p[LANES[k]] = p[LANES[k]].filter((x) => !set.has(x.id)); }
     for (const s of p.main) if (transitions.has(s.id)) s.transition = null;
@@ -556,7 +562,7 @@ export function rippleDelete() {
       }
     }
     const main = new Set(selection.filter((s) => s.kind === "main").map((s) => s.id));
-    p.main = p.main.filter((s) => !main.has(s.id));
+    removeMain(p, main, false);
     compactTracks(p);
   });
   setState({ selection: [] });
@@ -601,6 +607,7 @@ function insertCopies(main, texts, afterIndex, textTime, others = {}) {
   edit((p) => {
     const clips = main.map((s) => {
       const c = { ...structuredClone(s), id: uid() };
+      delete c.gap;
       newSel.push({ kind: "main", id: c.id });
       return c;
     });
@@ -878,8 +885,9 @@ export async function freezeFrame(dur = 3) {
       const i = p.main.findIndex((s) => s.id === seg.id);
       const a = p.main[i];
       const freeze = { ...newClip(mid, dur), ...copyLook(a) };
-      if (local < 0.02) { p.main.splice(i, 0, freeze); return; }
+      if (local < 0.02) { if (a.gap) { freeze.gap = a.gap; delete a.gap; } p.main.splice(i, 0, freeze); return; }
       const b = { ...structuredClone(a), id: uid(), in: sourceAt(a, local), dur: a.dur - local, keyframes: undefined };
+      delete b.gap;
       splitCurve(a, b, local);
       b.anim = { in: { ...a.anim.in, type: "none" }, out: a.anim.out };
       a.dur = local;
@@ -903,7 +911,7 @@ export function mergeClips() {
   edit((p) => {
     for (let i = p.main.length - 2; i >= 0; i--) {
       const a = p.main[i], b = p.main[i + 1];
-      if (!ids.has(a.id) || !ids.has(b.id) || a.mediaId !== b.mediaId || clipSpeed(a) !== clipSpeed(b) || hasCurve(a) || hasCurve(b)) continue;
+      if (!ids.has(a.id) || !ids.has(b.id) || b.gap || a.mediaId !== b.mediaId || clipSpeed(a) !== clipSpeed(b) || hasCurve(a) || hasCurve(b)) continue;
       if (Math.abs(a.in + a.dur * clipSpeed(a) - b.in) > 0.05) continue; // not contiguous footage
       a.dur += b.dur;
       a.transition = b.transition;
