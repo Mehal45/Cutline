@@ -56,6 +56,7 @@ export function edit(fn) {
   const draft = structuredCloneProject(state.project);
   fn(draft);
   linkToMain(state.project, draft);
+  stackTexts(draft);
   past.push(state.project);
   if (past.length > 100) past.shift();
   future.length = 0;
@@ -223,15 +224,29 @@ export function freeTrack(list, start, dur, skipId) {
   }
 }
 
+/**
+ * Texts that would overlap in time on the same text track go to the next free one (a new text track if
+ * needed), so a text added on top of another gets its own row. Earlier texts keep their track (mutates).
+ */
+export function stackTexts(p) {
+  const done = [];
+  for (const x of p.texts || []) {
+    const t = x.track ?? 0;
+    if (done.some((y) => (y.track ?? 0) === t && y.start < x.start + x.dur - 1e-3 && y.start + y.dur > x.start + 1e-3)) x.track = freeTrack(done, x.start, x.dur);
+    done.push(x);
+  }
+}
+
 /** Renumbers the tracks of overlays, audio and effects so no empty lanes are left between them (mutates). */
 export function compactTracks(p) {
   const state = p.trackState || {};
   const moved = {};
-  for (const [lane, kind] of [["overlays", "overlay"], ["audio", "audio"], ["effects", "effect"]]) {
+  for (const [lane, kind] of [["texts", "text"], ["overlays", "overlay"], ["audio", "audio"], ["effects", "effect"]]) {
     const used = [...new Set((p[lane] || []).map((x) => x.track ?? 0))].sort((a, b) => a - b);
     const map = new Map(used.map((t, i) => [t, i]));
     for (const x of p[lane] || []) x.track = map.get(x.track ?? 0);
     // Lock / hide / mute settings follow their track to its new number.
+    if (kind === "text") continue; // all text tracks share one lock / hide setting ("text")
     for (const [from, to] of map) if (state[`${kind}:${from}`]) moved[`${kind}:${to}`] = state[`${kind}:${from}`];
   }
   if (p.trackState) p.trackState = { ...(state.main ? { main: state.main } : {}), ...(state.text ? { text: state.text } : {}), ...moved };

@@ -518,7 +518,8 @@ export function drawFrame(ctx, project, t, opts = {}) {
     ctx.drawImage(out, 0, 0, W, H);
     ctx.restore();
   }
-  if (!hidden("text")) for (const item of project.texts) drawText(ctx, item, t, W, H);
+  // Texts on higher text tracks draw on top (like the timeline rows).
+  if (!hidden("text")) for (const item of [...project.texts].sort((a, b) => (a.track ?? 0) - (b.track ?? 0))) drawText(ctx, item, t, W, H);
 }
 
 /** Items of a lane (overlays, audio, effects) visible at t, with local and source time. */

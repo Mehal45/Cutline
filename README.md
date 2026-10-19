@@ -22,6 +22,7 @@ A free, open-source CapCut-style video editor for Windows and Mac. No account, n
 - **Exact numbers:** every slider has a number box you can type into; volume is shown in decibels (0 dB = unchanged, −6 dB = half)
 - **Cut fast:** split, trim, ripple delete, merge, freeze frame, detach audio, speed 0.1–10×, magnetic snapping
 - **Timeline toggles (right of the timeline toolbar), like CapCut:** main track magnet (off = deleting, trimming or moving a main clip leaves empty space; on again closes the gaps), auto snapping, linkage (texts, layers, audio and effects move with the main clip they sit on) and preview axis (hover over the timeline to preview that moment)
+- **Text tracks:** a text added on top of another goes onto its own text row (Text 1, Text 2…) instead of overlapping; drag texts between rows. Higher rows show on top
 - **Replace clip:** drag a video or picture from the library onto a clip and choose *Replace clip*; a trimmer opens already set to the clip's length (e.g. the first 5 s of a 10 s video for a 5 s clip), drag it to pick the part you want. Position, effects, filter, animation and keyframes stay
 - **Blend modes, crop and flips** on any clip or layer
 - **Saved elements:** right-click a clip or layer › **Save as element** to keep it with all its settings (e.g. a green screen with its key, size and position done). The **Elements** tab adds it to any project in one click or by dragging, and brings in the file if it isn't in the library yet

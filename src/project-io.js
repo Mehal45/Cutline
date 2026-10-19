@@ -2,7 +2,7 @@
 //
 // A project file is JSON: the timeline plus a list of media. Media that came from disk is stored by its
 // path (desktop app) or name (browser); media Cutline made itself (freeze frames, voice-overs) is embedded.
-import { getState, setState, projectDuration } from "./store.js";
+import { getState, setState, projectDuration, stackTexts } from "./store.js";
 import { toast } from "./actions.js";
 import { rootProject, resetCompounds } from "./compound.js";
 
@@ -75,6 +75,7 @@ export async function loadProject(text, path = null) {
   if (data.app !== "Cutline" || !data.project) throw new Error("This isn't a Cutline project file.");
   const { media, missing } = await restoreMedia(data.project.media || {});
   const project = { overlays: [], audio: [], effects: [], ...data.project, media };
+  stackTexts(project); // older projects: texts on top of each other get their own text tracks
   resetCompounds();
   setState({ project, selection: [], time: 0, playing: false, canUndo: false, canRedo: false, relink: missing.length ? missing : null });
   savedSnapshot = project;

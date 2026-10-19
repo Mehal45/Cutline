@@ -492,12 +492,13 @@ export function Timeline() {
         if (kind === "overlay") want = row.type === "overlay" ? row.track : ["above", "text", "effect"].includes(row.type) ? maxT + 1 : null;
         if (kind === "audio") want = row.type === "audio" ? row.track : row.type === "below" ? maxT + 1 : null;
         if (kind === "effect") want = row.type === "effect" ? row.track : row.type === "above" ? 0 : null;
+        if (kind === "text") want = row.type === "text" ? row.track : row.type === "above" || row.type === "effect" ? maxT + 1 : null;
         editLive((p) => {
           for (const m of movers) {
             const x = p[lane].find((y) => y.id === m.id);
             x.start = m.start + dt;
             if (m.words) x.words = m.words.map((w) => ({ ...w, t0: w.t0 + dt, t1: w.t1 + dt }));
-            if (kind !== "text") {
+            {
               const target = want == null ? (x.track ?? 0) : want + ((m.track ?? 0) - (lead.track ?? 0));
               x.track = freeTrackFrom(p[lane].filter((y) => !skip.has(y.id) || y.id === x.id), target, x.start, x.dur, x.id);
             }
@@ -519,7 +520,7 @@ export function Timeline() {
             toast("Moved onto the main track");
             return;
           }
-          if (kind !== "text") editLive(compactTracks);
+          editLive(compactTracks);
         },
       });
     };
@@ -750,6 +751,8 @@ export function Timeline() {
 
   const maxTrack = (list) => Math.max(-1, ...(list || []).map((x) => x.track ?? 0));
   const effectTracks = [...Array(maxTrack(project.effects) + 1).keys()];
+  const textTracks = [...Array(maxTrack(project.texts) + 1).keys()].reverse();
+  if (!textTracks.length) textTracks.push(0);
   const overlayTracks = [...Array(maxTrack(project.overlays) + 1).keys()].reverse();
   const audioTracks = [...Array(maxTrack(project.audio) + 1).keys()];
 
@@ -830,11 +833,11 @@ export function Timeline() {
           ${project.effects.filter((x) => (x.track ?? 0) === tr).map((x) => laneItem("effect", x, "effect", x.name || "Effect"))}
         </div>`)}
 
-        <div class=${"track text-track" + (trackFlags(project, "text").locked ? " locked" : "") + (trackFlags(project, "text").hidden ? " hidden" : "")} data-lane="text">
-          <${TrackHead} k="text" label="Text" icon="type" project=${project} mute=${false} />
-          ${project.texts.map((t) => laneItem("text", t, "text" + (t.caption ? " caption" : ""), t.text,
+        ${textTracks.map((tr) => html`<div class=${"track text-track" + (trackFlags(project, "text").locked ? " locked" : "") + (trackFlags(project, "text").hidden ? " hidden" : "")} data-lane="text" data-track=${tr} key=${"t" + tr}>
+          <${TrackHead} k="text" label=${`Text${textTracks.length > 1 ? " " + (tr + 1) : ""}`} icon="type" project=${project} mute=${false} />
+          ${project.texts.filter((t) => (t.track ?? 0) === tr).map((t) => laneItem("text", t, "text" + (t.caption ? " caption" : ""), t.text,
             t.sound && project.media[t.sound.mediaId] ? html`<b class="badge sndbadge" title=${"Sound: " + project.media[t.sound.mediaId].name}>🔊</b>` : null))}
-        </div>
+        </div>`)}
 
         ${overlayTracks.map((tr) => html`<div class=${"track lane-overlay" + (trackFlags(project, `overlay:${tr}`).locked ? " locked" : "") + (trackFlags(project, `overlay:${tr}`).hidden ? " hidden" : "")} data-lane="overlay" data-track=${tr} key=${"o" + tr}>
           <${TrackHead} k=${`overlay:${tr}`} label=${`Layer ${tr + 1}`} icon="layers" project=${project} />
