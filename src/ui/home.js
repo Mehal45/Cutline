@@ -21,7 +21,11 @@ export function Home() {
   const [busy, setBusy] = useState(null);
   const hasProject = useStore((s) => s.project.main.length + s.project.texts.length + (s.project.overlays?.length || 0) + (s.project.audio?.length || 0) > 0);
   const refresh = () => desktop.recentList().then(setList).catch(() => setList([]));
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => {
+    refresh();
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, []);
   const open = async (r) => {
     if (!r.exists) return;
     setBusy(r.path);

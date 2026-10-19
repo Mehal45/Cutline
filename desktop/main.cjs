@@ -84,7 +84,7 @@ ipcMain.handle("cutline:save", async (e, json, current, name) => {
     if (r.canceled || !r.filePath) return null;
     target = r.filePath;
   }
-  await fs.promises.writeFile(target, json, "utf8");
+  await writeAtomic(target, json);
   return target;
 });
 ipcMain.handle("cutline:open", async (e) => {
@@ -120,16 +120,32 @@ ipcMain.handle("cutline:untitled-path", async () => {
 // Recent projects: <userData>/recent.json, newest first: [{ path, name, dur, thumb, openedAt }].
 const recentPath = () => path.join(app.getPath("userData"), "recent.json");
 const samePath = (a, b) => (process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b);
-const readRecent = async () => { try { return JSON.parse(await fs.promises.readFile(recentPath(), "utf8")); } catch { return []; } };
+/** The list, or null if the file is unreadable (then it's never overwritten with an empty list). */
+async function readRecent() {
+  for (let i = 0; i < 5; i++) {
+    try { return JSON.parse(await fs.promises.readFile(recentPath(), "utf8")); } catch (e) {
+      if (e.code === "ENOENT") return [];
+      await new Promise((r) => setTimeout(r, 150)); // another Cutline (one closing) may be writing it
+    }
+  }
+  return null;
+}
+/** Writes whole-or-nothing: a new file, then renamed over the old one. */
+async function writeAtomic(file, text) {
+  const tmp = `${file}.${process.pid}.tmp`;
+  await fs.promises.writeFile(tmp, text, "utf8");
+  await fs.promises.rename(tmp, file);
+}
 let recentQueue = Promise.resolve();
 /** Changes the list one at a time (an "opened" and a later "thumbnail" update never overwrite each other). */
 const changeRecent = (fn) => (recentQueue = recentQueue.then(async () => {
-  const next = fn(await readRecent());
-  await fs.promises.writeFile(recentPath(), JSON.stringify(next), "utf8");
+  const list = await readRecent();
+  if (!list) return;
+  await writeAtomic(recentPath(), JSON.stringify(fn(list)));
 }).catch(() => {}));
 ipcMain.handle("cutline:recent-list", async () => {
   await recentQueue;
-  return Promise.all((await readRecent()).map(async (r) => {
+  return Promise.all(((await readRecent()) || []).map(async (r) => {
     try { const st = await fs.promises.stat(r.path); return { ...r, exists: true, modified: st.mtimeMs }; } catch { return { ...r, exists: false }; }
   }));
 });
@@ -160,7 +176,7 @@ ipcMain.handle("cutline:scan", async (e, src) => {
   return r;
 });
 
-ipcMain.handle("cutline:autosave", (_e, json) => fs.promises.writeFile(autosavePath(), json, "utf8"));
+ipcMain.handle("cutline:autosave", (_e, json) => writeAtomic(autosavePath(), json));
 ipcMain.handle("cutline:recover", async () => {
   try { return await fs.promises.readFile(autosavePath(), "utf8"); } catch { return null; }
 });
@@ -170,7 +186,7 @@ const prefsPath = () => path.join(app.getPath("userData"), "prefs.json");
 ipcMain.handle("cutline:prefs-load", async () => {
   try { return JSON.parse(await fs.promises.readFile(prefsPath(), "utf8")); } catch { return {}; }
 });
-ipcMain.handle("cutline:prefs-save", (_e, prefs) => fs.promises.writeFile(prefsPath(), JSON.stringify(prefs ?? {}, null, 1), "utf8"));
+ipcMain.handle("cutline:prefs-save", (_e, prefs) => writeAtomic(prefsPath(), JSON.stringify(prefs ?? {}, null, 1)));
 // Smooth-preview proxies: <userData>/proxies/<hash of path+size+date>.mp4 ("-silent" when it has no sound).
 const proxyDir = () => path.join(app.getPath("userData"), "proxies");
 const inProxyDir = (p) => typeof p === "string" && path.resolve(p).startsWith(proxyDir() + path.sep);
