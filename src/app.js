@@ -8,7 +8,7 @@ import {
 } from "./engine.js";
 import {
   clock, play, pause, togglePlay, seek, toast, importFiles, addMediaToTimeline, splitAtPlayhead, deleteSelection,
-  rippleDelete, selectAll, copySelection, cutSelection, paste, duplicateSelection, applyTransition, freezeFrame,
+  rippleDelete, selectAll, copySettings, pasteSettings, copySelection, cutSelection, paste, duplicateSelection, applyTransition, freezeFrame,
   localTime, splitAllAtPlayhead, toggleMute, zoomTimeline, openPreview, closePreview, zoomToFit, trimToPlayhead,
 } from "./actions.js";
 import { SourceViewer, toggleSource, stepSource, markSource, addFromSource } from "./ui/source.js";
@@ -21,6 +21,10 @@ import { rootProject, createCompound } from "./compound.js";
 import { Inspector } from "./ui/inspector.js";
 import { Home } from "./ui/home.js";
 import { Timeline, dragGesture, setToggle } from "./ui/timeline.js";
+import { MaskHandles, CropBox } from "./ui/mask.js";
+import { ShapesTab } from "./ui/shapes.js";
+import { SettingsDialog } from "./ui/settings.js";
+import { loadSettings, settings as appSettings, lastDur, rememberDur } from "./settings.js";
 import {
   EffectsTab, FiltersTab, AudioTab, TextTab, AdjustmentTab, AudioPresetsTab, MediaKitsTab, ElementsTab,
 } from "./ui/library.js";
@@ -28,13 +32,16 @@ import { EFFECT_CATEGORIES } from "./fx.js";
 import { linkWebFonts, loadProjectFonts, loadSystemFonts, loadRecentFonts } from "./ui/fonts.js";
 import { loadTextPresets, addDefaultText } from "./presets.js";
 import {
-  saveProject, openProject, newProject, relink, startAutosave, checkRecovery, restoreRecovery, loadProject, desktop, projectName, openFromDisk,
+  saveProject, openProject, newProject, relink, startAutosave, checkRecovery, restoreRecovery, loadProject, desktop, projectName, openFromDisk, openLastProject,
 } from "./project-io.js";
 
 const additiveKey = (e) => e.shiftKey || e.ctrlKey || e.metaKey;
-setState({ snap: true, ...(() => { try { return JSON.parse(localStorage.getItem("cutline.timelineToggles") || "{}"); } catch { return {}; } })(), timelineH: Math.max(260, Math.min(460, Math.round(window.innerHeight * 0.38))), previewQuality: (() => { try { return +localStorage.getItem("cutline.previewQuality") || 1; } catch { return 1; } })() });
+setState({ snap: true, ...(() => { try { return JSON.parse(localStorage.getItem("cutline.timelineToggles") || "{}"); } catch { return {}; } })(), timelineH: Math.max(260, Math.min(460, Math.round(window.innerHeight * 0.38))), previewQuality: (() => { try { return +localStorage.getItem("cutline.previewQuality") || 1; } catch { return 1; } })(),
+  rememberText: (() => { try { return !!localStorage.getItem("cutline.rememberText"); } catch { return false; } })(),
+  previewFps: (() => { try { return +localStorage.getItem("cutline.previewFps") || 60; } catch { return 60; } })() });
 
 startProxies();
+loadSettings();
 import("./decode.js").then((d) => d.startScans(getState, setState));
 
 /** Smooth-preview toggle with the background progress. */
@@ -56,11 +63,15 @@ function ProxyButton() {
 
 function startRenderLoop(canvas) {
   const ctx = canvas.getContext("2d");
-  let raf, held = 0;
-  const tick = () => {
+  let raf, held = 0, lastDraw = 0;
+  const tick = (now) => {
     raf = requestAnimationFrame(tick);
     if (renderLock.exporting) return;
     const s = getState();
+    // Preview frame rate (while playing): skip screen refreshes to draw at most previewFps frames a second.
+    const fps = s.previewFps || 60;
+    if (s.playing && fps < 60 && now - lastDraw < 1000 / fps - 4) return;
+    lastDraw = now;
     let t = s.time;
     if (s.playing) {
       t = clock.startT + (performance.now() - clock.startNow) / 1000;
@@ -128,6 +139,7 @@ function MainMenu({ onShortcuts, onExport }) {
       <button onClick=${run(undo)}>Undo <kbd>Ctrl+Z</kbd></button>
       <button onClick=${run(redo)}>Redo <kbd>Ctrl+Y</kbd></button>
       <button onClick=${run(onShortcuts)}>Keyboard shortcuts <kbd>?</kbd></button>
+      <button onClick=${run(() => setState({ settingsOpen: true }))}>Settings… <kbd>Ctrl+,</kbd></button>
     </div>`}
   </div>`;
 }
@@ -151,6 +163,7 @@ function Header({ onExport, onShortcuts }) {
     <div class="title ell">${name}</div>
     <div class="row">
       <button class="ibtn" onClick=${onShortcuts} title="Keyboard shortcuts (?)"><${Icon} n="keyboard" /></button>
+      <button class="ibtn" onClick=${() => setState({ settingsOpen: true })} title="Settings (Ctrl+,)"><${Icon} n="settings" /></button>
       <button class="export-btn" onClick=${onExport} title="Export (Ctrl+E)"><${Icon} n="upload" /> Export</button>
     </div>
   </header>`;
@@ -161,6 +174,7 @@ function Header({ onExport, onShortcuts }) {
 const LIB_TABS = [
   ["media", "Media", "film"],
   ["elements", "Elements", "shapes"],
+  ["shapes", "Shapes", "triangle"],
   ["audio", "Audio", "music"],
   ["text", "Text", "type"],
   ["effects", "Effects", "sparkles"],
@@ -173,6 +187,7 @@ const LIB_TABS = [
 const SUB_NAV = {
   media: [["library", "Library"], ["kits", "My kits"]],
   elements: [["mine", "My elements"]],
+  shapes: [["basic", "Shapes"], ["arrows", "Arrows"]],
   audio: [["music", "Music & sounds"], ["tts", "Text to speech"], ["mine", "My presets"]],
   text: [["mine", "My presets"], ["add", "Add text"], ["presets", "Text presets"], ["captions", "Auto captions"]],
   effects: EFFECT_CATEGORIES.map((c, i) => [String(i), c]),
@@ -201,6 +216,7 @@ function LeftPanel() {
       <div class="libcontent">
         ${tab === "media" && (sub === "kits" ? html`<${MediaKitsTab} />` : html`<${MediaTab} />`)}
         ${tab === "elements" && html`<${ElementsTab} />`}
+        ${tab === "shapes" && html`<${ShapesTab} part=${sub} />`}
         ${tab === "audio" && (sub === "mine" ? html`<${AudioPresetsTab} />` : html`<${AudioTab} part=${sub} />`)}
         ${tab === "text" && (sub === "captions" ? html`<${CaptionsForm} />` : html`<${TextTab} part=${sub} />`)}
         ${tab === "effects" && html`<${EffectsTab} cat=${+sub} />`}
@@ -258,7 +274,7 @@ function MediaTab() {
 }
 
 function TransitionsTab() {
-  const [dur, setDur] = useState(0.6);
+  const [dur, setDur] = useState(() => lastDur("transition", 0.6));
   return html`<div>
     <p class="muted">Select a ◆ cut or a clip, then pick a transition. With nothing selected it goes on the cut nearest the playhead.</p>
     <div class="grid2">
@@ -266,7 +282,7 @@ function TransitionsTab() {
         <span class=${"tr-icon tr-" + k}></span>${label}
       </button>`)}
     </div>
-    <${Slider} label="Duration" value=${dur} min=${0.1} max=${3} step=${0.05} format=${secs} onChange=${(v) => setDur(v)} />
+    <${Slider} label="Duration" value=${dur} min=${0.1} max=${3} step=${0.05} format=${secs} onChange=${(v) => { setDur(v); rememberDur("transition", v); }} />
     <button class="wide" onClick=${() => applyTransition("crossfade", dur, true)}>Cross fade every cut</button>
   </div>`;
 }
@@ -339,6 +355,10 @@ function Player() {
           <option value="0.5">½</option>
           <option value="0.25">¼</option>
         </select>
+        <select class="pq" value=${useStore((s) => s.previewFps) || 60} title="Preview frame rate while playing: lower uses less CPU / GPU (export always uses the project's fps)"
+          onChange=${(e) => { const v = +e.target.value; setState({ previewFps: v }); try { localStorage.setItem("cutline.previewFps", v); } catch {} }}>
+          ${[60, 30, 24, 20, 15].map((v) => html`<option value=${v}>${v} fps</option>`)}
+        </select>
         <${ProxyButton} />
         <button class=${"ibtn" + (useStore((s) => s.axis) ? " on" : "")} onClick=${() => setState({ axis: !getState().axis })} title="Guides and safe area (G)"><${Icon} n="scan" /></button>
         <select class="pq" title="Canvas ratio" value=${`${width}x${height}`} onChange=${(e) => { const [w, h] = e.target.value.split("x").map(Number); ratio(w, h); }}>
@@ -383,6 +403,8 @@ function TransformOverlay({ rect }) {
   const selection = useStore((s) => s.selection);
   const guides = useStore((s) => s.guides);
   const axis = useStore((s) => s.axis);
+  const maskEditing = useStore((s) => s.maskEditing);
+  const cropping = useStore((s) => s.cropping);
   const ref = useRef();
   const W = project.width, H = project.height;
   const visible = visibleItems(project, time);
@@ -478,6 +500,8 @@ function TransformOverlay({ rect }) {
       <i class="h" style=${{ top: "33.33%" }} /><i class="h" style=${{ top: "66.66%" }} />
       <i class="v c" style=${{ left: "50%" }} /><i class="h c" style=${{ top: "50%" }} /><b /></div>`}
     ${selectedVisible.map(({ kind, item }) => {
+      if (cropping?.id === item.id) return null;
+      if (maskEditing === item.id && item.mask?.shape) return html`<${MaskHandles} key=${item.id} kind=${kind} item=${item} rect=${rect} overlay=${ref} />`;
       const b = bounds(kind, item);
       if (!b) return null;
       const single = selectedVisible.length === 1;
@@ -488,11 +512,12 @@ function TransformOverlay({ rect }) {
           }}>
         ${single && ["nw", "ne", "sw", "se"].map((c) => html`<div key=${c} class=${"knob " + c}
           onPointerDown=${(e) => startScale(e, kind, item)} />`)}
-        ${single && kind === "text" && ["w", "e"].map((c) => html`<div key=${c} class=${"knob " + c} title="Drag to make the text box wider or narrower (wider = fewer lines)"
+        ${single && kind === "text" && !item.shape && ["w", "e"].map((c) => html`<div key=${c} class=${"knob " + c} title="Drag to make the text box wider or narrower (wider = fewer lines)"
           onPointerDown=${(e) => startBoxWidth(e, item)} />`)}
         ${single && html`<div class="rot" title="Rotate (Shift snaps to 15°)" onPointerDown=${(e) => startRotate(e, kind, item)} />`}
       </div>`;
     })}
+    <${CropBox} rect=${rect} overlay=${ref} />
   </div>`;
 }
 
@@ -513,6 +538,7 @@ const SHORTCUTS = [
   ["Ctrl+Y / Ctrl+Shift+Z", "Redo"],
   ["Ctrl+C / Ctrl+X / Ctrl+V", "Copy / cut / paste at playhead"],
   ["Ctrl+D", "Duplicate selection"],
+  ["Ctrl+Alt+C / Ctrl+Alt+V", "Copy settings / paste them onto the selected items"],
   ["Ctrl+A", "Select all"],
   ["S", "Split the selection (or the main clip) at the playhead"],
   ["Ctrl+B", "Split everything under the playhead"],
@@ -627,10 +653,12 @@ function ExportDialog({ onClose }) {
   const [phase, setPhase] = useState("idle");
   const [url, setUrl] = useState(null);
   const [error, setError] = useState(null);
-  const [res, setRes] = useState(Math.min(p.width, p.height));
-  const [fps, setFps] = useState(p.fps);
-  const [codec, setCodec] = useState("avc");
-  const [quality, setQuality] = useState("high");
+  const def = appSettings();
+  const [res, setRes] = useState(def.exportRes === "project" ? Math.min(p.width, p.height) : def.exportRes);
+  const [fps, setFps] = useState(def.exportFps === "project" ? p.fps : def.exportFps);
+  const [codec, setCodec] = useState(def.exportCodec || "avc");
+  const [quality, setQuality] = useState(def.exportQuality || "high");
+  const [encoder, setEncoder] = useState(def.encoder || "auto");
   const [customKbps, setCustomKbps] = useState(40000);
   const [smooth, setSmooth] = useState(() => { try { return localStorage.getItem("cutline.smoothMotion") || "off"; } catch { return "off"; } });
   const [blur, setBlur] = useState(() => { try { return +(localStorage.getItem("cutline.motionBlur") ?? 0); } catch { return 0; } });
@@ -646,7 +674,7 @@ function ExportDialog({ onClose }) {
     const started = performance.now();
     try {
       await loadProjectFonts(getState().project);
-      const blob = await exportMp4(rootProject(), setProgress, abort.current.signal, { ...size, fps, codec, quality, customKbps, smooth: { method: smooth, blur } });
+      const blob = await exportMp4(rootProject(), setProgress, abort.current.signal, { ...size, fps, codec, quality, customKbps, encoder, software: encoder === "software", smooth: { method: smooth, blur } });
       setUrl(URL.createObjectURL(blob));
       setPhase(`in ${((performance.now() - started) / 1000).toFixed(1)}s · ${(blob.size / 1e6).toFixed(1)} MB`);
     } catch (err) {
@@ -669,6 +697,12 @@ function ExportDialog({ onClose }) {
       <${Field} label="Frame rate">
         <select value=${fps} disabled=${busy} onChange=${(e) => setFps(+e.target.value)}>
           ${[24, 25, 30, 50, 60, 90, 120].map((f) => html`<option value=${f}>${f} fps${f > 60 ? " (smooth motion)" : ""}</option>`)}
+        </select>
+      <//>
+      <${Field} label="Encoder">
+        <select value=${encoder} disabled=${busy} title="Hardware = graphics card (fast). Software = processor (slower, always works). Default in Settings."
+          onChange=${(e) => setEncoder(e.target.value)}>
+          <option value="auto">Auto</option><option value="hardware">Hardware (GPU)</option><option value="software">Software (CPU)</option>
         </select>
       <//>
       <${Field} label="Smooth motion">
@@ -746,9 +780,12 @@ function RecoveryBar() {
       if (t) {
         try { await restoreRecovery(t); toast("Restored your unsaved work from last time"); }
         catch { desktop?.clearAutosave(); }
+        return;
       }
+      await openLastProject(); // Settings › When Cutline opens
     })();
     desktop?.onOpenFile?.((f) => openFromDisk(f));
+    desktop?.onSavedFile?.((p) => toast(`Saved to ${p}`, 5000));
   }, []);
   if (!text) return null;
   const dismiss = () => { desktop?.clearAutosave(); setText(null); };
@@ -791,8 +828,11 @@ function useShortcuts(openShortcuts, openExport) {
         if (key === "escape") return run(closePreview);
       }
       if (mod) {
+        if (key === ",") return run(() => setState({ settingsOpen: true }));
         if (key === "z") return run(e.shiftKey ? redo : undo);
         if (key === "y") return run(redo);
+        if (key === "c" && e.altKey) return run(copySettings);
+        if (key === "v" && e.altKey) return run(pasteSettings);
         if (key === "c") return run(copySelection);
         if (key === "x") return run(cutSelection);
         if (key === "v") return run(paste);
@@ -887,6 +927,7 @@ function App() {
     ${dialog === "captions" && html`<${CaptionsDialog} onClose=${() => setDialog(null)} />`}
     ${dialog === "export" && html`<${ExportDialog} onClose=${() => setDialog(null)} />`}
     ${dialog === "shortcuts" && html`<${ShortcutsDialog} onClose=${() => setDialog(null)} />`}
+    ${useStore((s) => s.settingsOpen) && html`<${SettingsDialog} onClose=${() => setState({ settingsOpen: false })} />`}
   </div>`;
 }
 

@@ -22,6 +22,15 @@ A free, open-source CapCut-style video editor for Windows and Mac. No account, n
 - **Exact numbers:** every slider has a number box you can type into; volume is shown in decibels (0 dB = unchanged, −6 dB = half)
 - **Cut fast:** split, trim, ripple delete, merge, freeze frame, detach audio, speed 0.1–10×, magnetic snapping
 - **Timeline toggles (right of the timeline toolbar), like CapCut:** main track magnet (off = deleting, trimming or moving a main clip leaves empty space; on again closes the gaps), auto snapping, linkage (texts, layers, audio and effects move with the main clip they sit on) and preview axis (hover over the timeline to preview that moment)
+- **Masks:** Video › Mask: rectangle, square, circle, ellipse, heart, star, split and band; drag the shape in the player to move, resize, rotate and round its corners; feather and invert
+- **Crop tool:** Crop button next to Freeze / Mirror (and in the timeline toolbar): drag the box in the player, with Free, Original, 16:9, 9:16, 1:1, 4:3 and 3:4
+- **Shapes:** library › Shapes: rectangles, circles, triangles, polygons, stars, hearts, speech bubbles, lines and many arrows; fill, outline or both, colours with opacity, outline width, size and corner radius
+- **Copy / paste settings:** copy every setting of a text or clip (style, font, animation, position, effects…) and paste it onto one or many others (Ctrl+Alt+C / Ctrl+Alt+V)
+- **Text:** Bold / Italic / Underline / Caps buttons, no outline by default, opacity for outline and shadow, and "Remember these settings for new texts"
+- **Settings (Ctrl+,):** projects folder, autosave interval, open the last project on start, export defaults (resolution, frame rate, format, quality), hardware or software encoder, export folder, preview quality and frame rate, picture / text length, GPU acceleration
+- **Remembers durations:** new transitions and in / out animations start with the length you used last
+- **Preview frame rate:** play the preview at 60, 30, 24, 20 or 15 fps to save CPU / GPU
+- **Timeline:** the time ruler stays at the top when you scroll; dragging the playhead to the edge scrolls the timeline; dark scrollbars
 - **Text tracks:** a text added on top of another goes onto its own text row (Text 1, Text 2…) instead of overlapping; drag texts between rows. Higher rows show on top
 - **Replace clip:** drag a video or picture from the library onto a clip and choose *Replace clip*; a trimmer opens already set to the clip's length (e.g. the first 5 s of a 10 s video for a 5 s clip), drag it to pick the part you want. Position, effects, filter, animation and keyframes stay
 - **Blend modes, crop and flips** on any clip or layer

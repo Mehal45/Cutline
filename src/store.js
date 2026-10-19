@@ -21,7 +21,7 @@ export const defaultTextStyle = () => ({
   weight: 800,
   color: "#ffffff",
   stroke: "#000000",
-  strokeWidth: 6,
+  strokeWidth: 0, // no outline unless you add one
   bg: "",
   highlight: "#ffd400",
 });

@@ -1,5 +1,5 @@
 // Right-hand inspector: properties of whatever is selected.
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { useStore, edit, editLive, checkpoint, findItem, getState, setState } from "../store.js";
 import { clipSpeed, clipTransform, BLEND_MODES, ANIMATIONS, TRANSITIONS, itemBounds } from "../engine.js";
 import {
@@ -19,6 +19,10 @@ import { hasCurve } from "../speed.js";
 import { setDefaultEase, defaultEase, propAt, hasKeys, keyAt } from "../keyframes.js";
 import { saveTextPreset, saveAdjustPreset, saveAudioPreset, presetsOf, applyAudioPreset, applyAdjustPreset, saveClipLookPreset } from "../presets.js";
 import { MultiClipInspector, PresetButtons, SavePresetButton } from "./multiclip.js";
+import { MaskSection, startCrop } from "./mask.js";
+import { lastDur, rememberDur } from "../settings.js";
+import { copySettings, pasteSettings } from "../actions.js";
+import { ShapeFields, shapeName } from "./shapes.js";
 
 /** "Save as preset": keeps this text's whole look for one-click reuse (Text tab › My presets). */
 function SavePreset({ t, save: saveFn, label = "Save as preset", hint = "Save font, size, colour, shadow, position, animation and length" }) {
@@ -63,14 +67,16 @@ function Seg({ items, value, onChange }) {
 
 function AnimFields({ anim, onChange, textOnly }) {
   const opts = Object.entries(ANIMATIONS).filter(([, v]) => textOnly || !v.textOnly);
+  // New animations start with the length you used last (texts and clips remembered separately).
+  const memo = (key) => `${textOnly ? "textAnim" : "clipAnim"}.${key}`;
   const part = (key, label) => html`<div class="anim-row">
     <${Field} label=${label}>
-      <select value=${anim[key].type} onChange=${(e) => onChange(key, { type: e.target.value })}>
+      <select value=${anim[key].type} onChange=${(e) => onChange(key, { type: e.target.value, ...(anim[key].type === "none" ? { dur: lastDur(memo(key), anim[key].dur) } : {}) })}>
         ${opts.map(([k, v]) => html`<option value=${k}>${v.label}</option>`)}
       </select>
     <//>
     <${Slider} label="Duration" value=${anim[key].dur} min=${0.05} max=${3} step=${0.05} format=${secs}
-      onChange=${(v) => onChange(key, { dur: v })} />
+      onChange=${(v) => { onChange(key, { dur: v }); rememberDur(memo(key), v); }} />
   </div>`;
   return html`<div>${part("in", "In animation")}${part("out", "Out animation")}</div>`;
 }
@@ -407,7 +413,7 @@ function VisualInspector({ kind, item, project }) {
   const t = tabs.some(([k]) => k === tab) ? tab : "video";
   return html`<${Shell} tabs=${tabs} tab=${t} setTab=${setTab} note=${media?.name}>
     ${t === "video" && html`
-      <${Seg} items=${[["basic", "Basic"], ["removebg", "Remove BG"], ["effects", "Effects"]]} value=${sub} onChange=${setSub} />
+      <${Seg} items=${[["basic", "Basic"], ["removebg", "Remove BG"], ["mask", "Mask"], ["effects", "Effects"]]} value=${sub} onChange=${setSub} />
       ${sub === "basic" && html`
         <${TransformSection} kind=${kind} id=${item.id} />
         <${BlendSection} kind=${kind} item=${item} />
@@ -417,11 +423,15 @@ function VisualInspector({ kind, item, project }) {
           ${media?.kind === "video" && html`<button onClick=${() => freezeFrame()} title="Hold the frame under the playhead for 3 seconds (F)"><${Icon} n="snowflake" /> Freeze</button>`}
           ${kind === "main" && html`<button onClick=${mergeClips} title="Select neighbouring pieces of one clip, then merge"><${Icon} n="combine" /> Merge</button>`}
           <button onClick=${mirrorSelection} title="Mirror left-right"><${Icon} n="flip-horizontal-2" /> Mirror</button>
+          <button onClick=${startCrop} title="Crop: drag the box in the player (Enter when done)"><${Icon} n="crop" /> Crop</button>
+          <button onClick=${copySettings} title="Copy this clip's settings (Ctrl+Alt+C)"><${Icon} n="clipboard-copy" /> Copy settings</button>
+          <button onClick=${pasteSettings} title="Paste copied settings onto the selected clips (Ctrl+Alt+V)"><${Icon} n="clipboard-paste" /> Paste settings</button>
           ${media?.kind !== "compound" && html`<button onClick=${() => saveElement(kind, item.id)} title="Save this clip with all its settings (key, cutout, effects, size…) to the Elements tab"><${Icon} n="bookmark-plus" /> Save as element</button>`}
           ${kind === "overlay" && html`<button onClick=${rippleDelete} title="Delete and close the gap (Shift+Delete)"><${Icon} n="between-horizontal-start" /> Ripple delete</button>`}
           <button class="danger" onClick=${deleteSelection}><${Icon} n="trash-2" /> Delete</button>
         </div>`}
       ${sub === "removebg" && html`<${CutoutSection} kind=${kind} item=${item} />`}
+      ${sub === "mask" && html`<${MaskSection} kind=${kind} item=${item} />`}
       ${sub === "effects" && html`<${EffectsSection} kind=${kind} item=${item} />`}`}
     ${t === "audio" && html`<${AudioSection} kind=${kind} item=${item} media=${media} />`}
     ${t === "speed" && html`<${SpeedFields} speed=${clipSpeed(item)} ids=${[item.id]} kind=${kind} id=${item.id} />`}
@@ -502,6 +512,13 @@ function TextFontFields({ st, setSt }) {
   const recent = useStore((s) => s.recentFonts) || [];
   const known = FONTS.some((f) => f.css === st.font) || (installed || []).some((f) => familyCss(f) === st.font);
   return html`<div>
+    <div class="bius">
+      <button class=${(st.weight ?? 400) >= 700 ? "chip on" : "chip"} title="Bold"
+        onClick=${() => { const w = (st.weight ?? 400) >= 700 ? 400 : 800; loadFont(st.font, w); setSt("weight", w); }}><b>B</b></button>
+      <button class=${st.italic ? "chip on" : "chip"} title="Italic" onClick=${() => setSt("italic", !st.italic || undefined)}><i>I</i></button>
+      <button class=${st.underline ? "chip on" : "chip"} title="Underline" onClick=${() => setSt("underline", !st.underline || undefined)}><u>U</u></button>
+      <button class=${st.uppercase ? "chip on" : "chip"} title="All capitals" onClick=${() => setSt("uppercase", !st.uppercase || undefined)}>AA</button>
+    </div>
     <div class="grid2">
       <${Field} label="Size"><input type="number" min="12" max="400" value=${st.size} onChange=${(e) => setSt("size", +e.target.value)} /><//>
       <${Field} label="Weight">
@@ -539,20 +556,27 @@ function TextFontFields({ st, setSt }) {
 }
 
 /** Colours, outline, shadow and background plate. */
+const alphaOf = (c) => parseInt((c || "").slice(7) || "ff", 16) / 255;
+const withAlpha = (c, a) => c.slice(0, 7) + Math.round(a * 255).toString(16).padStart(2, "0");
+
 function TextLookFields({ st, setSt }) {
   const shadow = st.shadow;
   return html`<div>
     <div class="grid2">
       <${Field} label="Colour"><input type="color" value=${st.color} onChange=${(e) => setSt("color", e.target.value)} /><//>
       <${Field} label="Highlight"><input type="color" value=${st.highlight} onChange=${(e) => setSt("highlight", e.target.value)} /><//>
-      <${Field} label="Outline"><input type="color" value=${st.stroke} onChange=${(e) => setSt("stroke", e.target.value)} /><//>
+      <${Field} label="Outline"><input type="color" value=${(st.stroke || "#000000").slice(0, 7)} onChange=${(e) => setSt("stroke", e.target.value + (st.stroke || "").slice(7))} /><//>
       <${Field} label="Outline width"><input type="number" min="0" max="30" value=${st.strokeWidth} onChange=${(e) => setSt("strokeWidth", +e.target.value)} /><//>
     </div>
+    ${st.strokeWidth > 0 && html`<${Slider} label="Outline opacity" value=${alphaOf(st.stroke)} min=${0} max=${1} format=${pct}
+      onChange=${(v, live) => setSt("stroke", withAlpha(st.stroke || "#000000", v), live)} />`}
     <${Section} title="Shadow" open=${!!shadow}>
       <label class="check"><input type="checkbox" checked=${!!shadow}
         onChange=${(e) => setSt("shadow", e.target.checked ? { color: "#000000aa", blur: 10, x: 4, y: 6 } : undefined)} /> Drop shadow</label>
       ${shadow && html`
         <${Field} label="Colour"><input type="color" value=${(shadow.color || "#000000").slice(0, 7)} onChange=${(e) => setSt("shadow", { ...shadow, color: e.target.value + (shadow.color?.slice(7) || "aa") })} /><//>
+        <${Slider} label="Shadow opacity" value=${alphaOf(shadow.color || "#000000aa")} min=${0} max=${1} format=${pct}
+          onChange=${(v, live) => setSt("shadow", { ...shadow, color: withAlpha(shadow.color || "#000000", v) }, live)} />
         <${Slider} label="Blur" value=${shadow.blur ?? 10} min=${0} max=${60} step=${1} format=${(v) => v.toFixed(0)} onChange=${(v, live) => setSt("shadow", { ...shadow, blur: v }, live)} />
         <div class="grid2">
           <${Slider} label="Offset X" value=${shadow.x ?? 4} min=${-40} max=${40} step=${1} format=${(v) => v.toFixed(0)} onChange=${(v, live) => setSt("shadow", { ...shadow, x: v }, live)} />
@@ -591,7 +615,43 @@ const selectAllCaptions = () => {
   toast(`Selected ${ids.length} caption${ids.length === 1 ? "" : "s"}`);
 };
 
+function ShapeInspector({ t }) {
+  const [tab, setTab] = useState("shape");
+  return html`<${Shell} tabs=${[["shape", shapeName(t.shape.type)], ["animate", "Animation"]]} tab=${tab} setTab=${setTab}>
+    ${tab === "shape" && html`<${ShapeFields} t=${t} /><${TransformSection} kind="text" id=${t.id} />`}
+    ${tab === "animate" && html`<${AnimateSection} kind="text" item=${t} />`}
+    <${SettingsCopyBar} />
+    <button class="danger wide" onClick=${deleteSelection}><${Icon} n="trash-2" /> Delete</button>
+  <//>`;
+}
+
+/** Copy this item's settings / paste copied settings onto the selection. */
+export function SettingsCopyBar() {
+  const has = useStore((s) => !!s.settingsClip);
+  return html`<div class="copybar">
+    <button onClick=${copySettings} title="Copy all settings (style, font, animation, position, effects…) — Ctrl+Alt+C"><${Icon} n="clipboard-copy" /> Copy settings</button>
+    <button onClick=${pasteSettings} disabled=${!has} title="Paste the copied settings onto every selected item — Ctrl+Alt+V"><${Icon} n="clipboard-paste" /> Paste settings</button>
+  </div>`;
+}
+
+/** "Remember text settings": new texts start with the look of the text you last styled. */
+function RememberText({ t }) {
+  const on = useStore((s) => s.rememberText);
+  useEffect(() => {
+    if (!on || t.caption) return;
+    try { localStorage.setItem("cutline.lastTextLook", JSON.stringify({ style: t.style, anim: t.anim, scale: t.scale, oneLine: t.oneLine, boxW: t.boxW })); } catch { /* ignore */ }
+  }, [on, t.style, t.anim, t.scale, t.oneLine, t.boxW]);
+  return html`<label class="check remember" title="New texts start with this text's font, size, colours, outline, shadow, background and animation">
+    <input type="checkbox" checked=${!!on} onChange=${(e) => { setState({ rememberText: e.target.checked }); try { localStorage.setItem("cutline.rememberText", e.target.checked ? "1" : ""); } catch {} }} />
+    Remember these settings for new texts</label>`;
+}
+
 function TextInspector({ t }) {
+  if (t.shape) return html`<${ShapeInspector} t=${t} />`;
+  return html`<${TextInspectorBody} t=${t} />`;
+}
+
+function TextInspectorBody({ t }) {
   const [tab, setTab] = useState("text");
   const linked = useStore((s) => s.captionLink);
   const captionCount = useStore((s) => s.project.texts.filter((x) => x.caption).length);
@@ -612,7 +672,9 @@ function TextInspector({ t }) {
   </div>`;
   return html`<${Shell} tabs=${[["text", t.caption ? "Caption" : "Text"], ["style", "Style"], ["animate", "Animation"]]} tab=${tab} setTab=${setTab}>
     ${linkBox}
+    <${SettingsCopyBar} />
     <${SavePreset} t=${t} />
+    <${RememberText} t=${t} />
     ${tab === "text" && html`
       <textarea rows="3" value=${t.text} onChange=${(e) => set((x) => { x.text = e.target.value; delete x.words; })} />
       ${t.caption && t.words && html`<p class="muted">Editing the text removes word-by-word highlighting for this caption.</p>`}
@@ -708,6 +770,7 @@ export function Inspector() {
     const first = clipIds.map((id) => project.main.find((s) => s.id === id) || project.overlays.find((s) => s.id === id)).find(Boolean);
     const texts = selection.filter((s) => s.kind === "text").map((s) => project.texts.find((x) => x.id === s.id)).filter(Boolean);
     return html`<${Shell} tabs=${[["sel", `${selection.length} selected`]]} tab="sel">
+      <${SettingsCopyBar} />
       ${texts.length > 0 && html`<${MultiTextFields} key=${texts.map((x) => x.id).join()} texts=${texts} />`}
       <p class="muted">Drag in the preview to move them together. Ctrl+C copy · Ctrl+D duplicate · Del delete.</p>
       ${first && html`<${SpeedFields} speed=${clipSpeed(first)} ids=${clipIds} />`}
@@ -738,7 +801,7 @@ export function Inspector() {
           class=${seg.transition.type === k ? "chip on" : "chip"} onClick=${() => set((t) => (t.type = k))}>${label}</button>`)}
       </div>
       <${Slider} label="Duration" value=${seg.transition.dur} min=${0.1} max=${3} step=${0.05} format=${secs}
-        onChange=${(v) => set((t) => (t.dur = v))} />
+        onChange=${(v) => { set((t) => (t.dur = v)); rememberDur("transition", v); }} />
       <button class="danger wide" onClick=${deleteSelection}>Remove transition</button>
     <//>`;
   }

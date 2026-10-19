@@ -191,6 +191,12 @@ async function linkSound(textId, sound) {
 
 /** "Add text": uses the preset marked as default, if any, otherwise the plain default text. */
 export function addDefaultText() {
+  if (getState().rememberText) {
+    try {
+      const look = JSON.parse(localStorage.getItem("cutline.lastTextLook") || "null");
+      if (look?.style) return addTextFromPreset({ look: { ...look, dur: 3 }, name: "remembered" });
+    } catch { /* fall through */ }
+  }
   const p = defaultPreset();
   if (p) return addTextFromPreset(p);
   addText();

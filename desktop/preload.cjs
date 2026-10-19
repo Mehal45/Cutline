@@ -27,6 +27,8 @@ contextBridge.exposeInMainWorld("cutlineDesktop", {
     ipcRenderer.send("cutline:close-ready");
   }),
   untitledPath: () => ipcRenderer.invoke("cutline:untitled-path"),
+  pickFolder: (start) => ipcRenderer.invoke("cutline:pick-folder", start),
+  onSavedFile: (cb) => ipcRenderer.on("cutline:saved-file", (_e, p) => cb(p)),
   /** Recent projects (newest first), with `exists` for each file. */
   recentList: () => ipcRenderer.invoke("cutline:recent-list"),
   recentAdd: (entry) => ipcRenderer.invoke("cutline:recent-add", entry),

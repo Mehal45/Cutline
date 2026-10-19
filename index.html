@@ -100,6 +100,7 @@
     .diamond.selected { background: var(--accent); color: var(--accent-ink); }
     .empty { position: absolute; left: 90px; top: 30px; color: var(--muted); }
     .playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--accent); pointer-events: none; z-index: 4; }
+    .ph-grab { position: absolute; top: 0; bottom: 0; left: -4px; width: 10px; pointer-events: auto; cursor: ew-resize; }
     .playhead::before { content: ""; position: absolute; top: 0; left: -5px; border: 6px solid transparent; border-top-color: var(--accent); }
 
     /* left panel tabs */
@@ -184,6 +185,69 @@
     .keyall.on { border-color: #ffd400; color: #ffd400; }
     .kmark:hover { transform: rotate(45deg) scale(.95); }
     .kmark.on { background: #fff; box-shadow: 0 0 0 2px var(--accent); transform: rotate(45deg) scale(.95); }
+    .mask-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .mask-btn { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 4px; font-size: 11px; }
+    .mask-btn .ico { font-size: 18px; }
+    .mask-btn.on { border-color: var(--accent); color: var(--accent); }
+    .muted.small { font-size: 11px; margin: 8px 0 0; }
+    .mask-ui { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+    .mask-outline * { fill: none; stroke: #fff; stroke-width: 1.5; stroke-dasharray: 6 4; filter: drop-shadow(0 0 1px #000); }
+    .mask-outline .faint { stroke-opacity: .6; }
+    .mask-body { fill: transparent; pointer-events: all; cursor: move; }
+    .mask-knob { fill: #fff; stroke: var(--accent); stroke-width: 2; pointer-events: all; cursor: nwse-resize; }
+    .mask-knob.rot { cursor: grab; }
+    .mask-knob.radius { fill: #ffd400; stroke: #000; cursor: ew-resize; }
+    .mask-stem { stroke: #fff; stroke-width: 1.5; }
+    .crop-ui { position: absolute; inset: 0; z-index: 3; }
+    .crop-ui svg { position: absolute; left: 0; top: 0; overflow: visible; }
+    .crop-shade { fill: rgba(0,0,0,.55); pointer-events: none; }
+    .crop-box { fill: transparent; stroke: #fff; stroke-width: 1.5; cursor: move; }
+    .crop-grid { stroke: rgba(255,255,255,.35); stroke-width: 1; pointer-events: none; }
+    .crop-knob { fill: #fff; stroke: #000; stroke-width: 1; }
+    .crop-knob.n, .crop-knob.s { cursor: ns-resize; } .crop-knob.e, .crop-knob.w { cursor: ew-resize; }
+    .crop-knob.nw, .crop-knob.se { cursor: nwse-resize; } .crop-knob.ne, .crop-knob.sw { cursor: nesw-resize; }
+    .crop-bar { position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); display: flex; gap: 4px; align-items: center; flex-wrap: wrap; justify-content: center;
+      background: rgba(20,21,24,.92); border: 1px solid var(--line); border-radius: 8px; padding: 5px; max-width: 96%; }
+    .crop-bar button { padding: 3px 8px; font-size: 12px; }
+    .crop-bar button.on { border-color: var(--accent); color: var(--accent); }
+    .crop-bar .sep { width: 1px; height: 18px; background: var(--line); }
+    /* Timeline ruler stays at the top while scrolling up and down */
+    .tl-scroll .ruler { position: sticky; top: 0; z-index: 7; }
+    .tl-scroll .playhead { z-index: 8; }
+    /* Scrollbars in the app's dark theme */
+    :root { color-scheme: dark; }
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #3a3d45; border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
+    ::-webkit-scrollbar-thumb:hover { background: #50545e; background-clip: padding-box; border: 2px solid transparent; }
+    .shape-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 6px; }
+    .shape-grid.small { grid-template-columns: repeat(6, 1fr); gap: 4px; }
+    .shape-btn { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 2px; font-size: 10.5px; line-height: 1.2; }
+    .shape-grid.small .shape-btn { padding: 2px; }
+    .shape-btn.on { border-color: var(--accent); }
+    .shape-ico { width: 34px; height: 34px; }
+    .seg.text.shape { background: #4a3a78; }
+    .copybar { display: flex; gap: 6px; margin: 6px 0; }
+    .copybar button { flex: 1; font-size: 12px; }
+    .check.remember { margin: 4px 0 8px; font-size: 12px; }
+    .bius { display: flex; gap: 6px; margin-bottom: 8px; }
+    .bius .chip { flex: 1; font-size: 15px; padding: 4px 0; }
+    .modal.settings { width: min(820px, 96vw); max-height: 88vh; display: flex; flex-direction: column; }
+    .set-body { display: flex; gap: 14px; min-height: 380px; overflow: hidden; margin-top: 8px; }
+    .set-nav { display: flex; flex-direction: column; gap: 2px; width: 190px; flex: none; }
+    .set-nav button { text-align: left; background: transparent; border: 0; padding: 8px 10px; border-radius: 6px; display: flex; gap: 8px; align-items: center; }
+    .set-nav button.on { background: var(--panel2); color: var(--accent); }
+    .set-page { flex: 1; overflow-y: auto; padding-right: 4px; display: flex; flex-direction: column; }
+    .set-row { display: flex; gap: 16px; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--line); }
+    .set-label { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+    .set-label .muted { font-size: 11.5px; }
+    .set-ctl { flex: none; max-width: 52%; }
+    .set-ctl select { min-width: 200px; }
+    .set-folder { display: flex; gap: 6px; align-items: center; max-width: 360px; }
+    .set-folder .ell { max-width: 200px; font-size: 12px; color: var(--muted); }
+    .set-checks { display: flex; flex-direction: column; gap: 4px; }
+    .set-foot { display: flex; justify-content: space-between; margin-top: auto; padding-top: 12px; }
+    .settings .warn { color: #ffb347; }
     .hover-line { position: absolute; top: 0; bottom: 0; width: 1px; background: #ffd400aa; pointer-events: none; z-index: 6; }
     .tl-toggles .ibtn.on { color: var(--accent); }
     .replace-dlg { width: min(640px, 94vw); }

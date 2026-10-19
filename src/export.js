@@ -133,9 +133,10 @@ export function bitrateFor(width, height, fps, quality = "high", customKbps) {
   return Math.round(Math.min(200e6, Math.max(1.5e6, width * height * fps * (QUALITY[quality]?.bpp ?? 0.13))));
 }
 
-async function pickVideoCodec(codec, width, height, fps, bitrate, software = false) {
+async function pickVideoCodec(codec, width, height, fps, bitrate, software = false, hardware = false) {
   for (const s of VIDEO_CODECS[codec].strings) {
-    const cfg = { codec: s, width, height, bitrate, framerate: fps, ...(software ? { hardwareAcceleration: "prefer-software" } : {}) };
+    const accel = software ? "prefer-software" : hardware ? "prefer-hardware" : null;
+    const cfg = { codec: s, width, height, bitrate, framerate: fps, ...(accel ? { hardwareAcceleration: accel } : {}) };
     try { if ((await VideoEncoder.isConfigSupported(cfg)).supported) return cfg; } catch { /* next */ }
   }
   return null;
@@ -241,7 +242,8 @@ async function exportOnce(project, onProgress, signal, opts = {}) {
 
   const codec = opts.codec ?? "avc";
   const bitrate = bitrateFor(width, height, fps, opts.quality, opts.customKbps);
-  const vcfg = await pickVideoCodec(codec, width, height, fps, bitrate, opts.software);
+  const vcfg = (await pickVideoCodec(codec, width, height, fps, bitrate, opts.software, opts.encoder === "hardware"))
+    || (opts.encoder === "hardware" ? await pickVideoCodec(codec, width, height, fps, bitrate) : null); // no GPU encoder for this format
   if (!vcfg) {
     if (await pickVideoCodec(codec, width, height, fps, 8e6)) {
       throw new Error(`This computer's ${VIDEO_CODECS[codec].label.split(" (")[0]} encoder doesn't accept ${Math.round(bitrate / 1000).toLocaleString()} kbps at ${width}×${height}. Try a lower bitrate.`);

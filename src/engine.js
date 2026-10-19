@@ -275,22 +275,46 @@ function drawVisual(ctx, project, item, lt, W, H) {
   if (!sw || !sh) return;
   const a = animState(item.anim, lt, item.dur);
   const tr = transformAt(item, lt);
-  const crop = item.crop || NO_CROP;
+  // While the crop tool is open the whole frame shows (the crop box is drawn over it).
+  const crop = (!renderLock.exporting && getState().cropping?.id === item.id ? null : item.crop) || NO_CROP;
   const fit = Math.min(W / sw, H / sh);
   const fx = fxSettingsAt(item, lt);
   const src = (item.cutout?.mode && cutoutFrame(item, el, sw, sh)) || el;
   const target = fx ? layer(W, H) : ctx;
+  const place = (c) => {
+    c.translate(tr.x * W + a.dx * W, tr.y * H + a.dy * H);
+    c.rotate((tr.rotation * Math.PI) / 180);
+    c.scale(a.scale * tr.scale * (item.flipH ? -1 : 1), a.scale * tr.scale * (item.flipV ? -1 : 1));
+  };
+  const sx = crop.l * sw, sy = crop.t * sh;
+  const cw = sw * (1 - crop.l - crop.r), ch = sh * (1 - crop.t - crop.b);
+  const draw = (c) => { if (cw > 0.5 && ch > 0.5) c.drawImage(src, sx, sy, cw, ch, (-sw * fit) / 2 + sx * fit, (-sh * fit) / 2 + sy * fit, cw * fit, ch * fit); };
+  // Mask: the clip is drawn on its own layer and cut to the shape (soft edge = blurred shape).
+  const mask = item.mask?.shape && item.mask.shape !== "none" ? item.mask : null;
+  let masked = null;
+  if (mask) {
+    masked = scratch(40, W, H);
+    masked.setTransform(1, 0, 0, 1, 0, 0);
+    masked.globalAlpha = 1; masked.globalCompositeOperation = "source-over"; masked.filter = "none";
+    masked.clearRect(0, 0, W, H);
+    masked.save(); place(masked); draw(masked); masked.restore();
+    masked.save(); place(masked);
+    masked.globalCompositeOperation = mask.invert ? "destination-out" : "destination-in";
+    const soft = ((mask.feather || 0) / 100) * Math.min(sw, sh) * fit * tr.scale * a.scale;
+    if (soft > 0.3) masked.filter = `blur(${soft.toFixed(1)}px)`;
+    masked.fillStyle = "#000";
+    maskPath(masked, mask, sw * fit, sh * fit);
+    masked.fill();
+    masked.restore();
+    masked.filter = "none"; masked.globalCompositeOperation = "source-over";
+  }
   target.save();
   if (!fx) {
     target.globalAlpha = a.alpha * tr.opacity;
     if (item.blend && item.blend !== "normal") target.globalCompositeOperation = BLEND_MODES[item.blend]?.[1] || "source-over";
   }
-  target.translate(tr.x * W + a.dx * W, tr.y * H + a.dy * H);
-  target.rotate((tr.rotation * Math.PI) / 180);
-  target.scale(a.scale * tr.scale * (item.flipH ? -1 : 1), a.scale * tr.scale * (item.flipV ? -1 : 1));
-  const sx = crop.l * sw, sy = crop.t * sh;
-  const cw = sw * (1 - crop.l - crop.r), ch = sh * (1 - crop.t - crop.b);
-  if (cw > 0.5 && ch > 0.5) target.drawImage(src, sx, sy, cw, ch, (-sw * fit) / 2 + sx * fit, (-sh * fit) / 2 + sy * fit, cw * fit, ch * fit);
+  if (masked) target.drawImage(masked.canvas, 0, 0);
+  else { place(target); draw(target); }
   target.restore();
   if (fx) {
     const out = applyFx(target.canvas, fx, lt, W, H);
@@ -300,6 +324,170 @@ function drawVisual(ctx, project, item, lt, W, H) {
     ctx.drawImage(out, 0, 0, W, H);
     ctx.restore();
   }
+}
+
+// ---------- masks ----------
+
+export const MASK_SHAPES = [["rect", "Rectangle", "rectangle-horizontal"], ["square", "Square", "square"], ["circle", "Circle", "circle"],
+  ["ellipse", "Ellipse", "egg"], ["heart", "Heart", "heart"], ["star", "Star", "star"], ["split", "Split", "square-split-vertical"], ["band", "Band", "rows-3"]];
+
+/**
+ * A mask's centre and size in the clip's frame (frame-centred pixels; the frame is fw × fh).
+ * mask = { shape, x, y (centre, 0–1 of the frame), w, h (0–1 of the frame), rot (deg), radius (0–1), feather (%), invert }
+ * Squares and circles keep equal sides (their height follows the width).
+ */
+export function maskBox(m, fw, fh) {
+  const w = Math.max(1, m.w * fw);
+  const h = m.shape === "square" || m.shape === "circle" ? w : Math.max(1, m.h * fh);
+  return { cx: (m.x - 0.5) * fw, cy: (m.y - 0.5) * fh, w, h };
+}
+
+/** Adds a mask's outline to the current path, in frame-centred coordinates (uses the context's transform). */
+export function maskPath(c, m, fw, fh) {
+  const { cx, cy, w, h } = maskBox(m, fw, fh);
+  const L = (fw + fh) * 4; // "infinite" for split / band
+  c.save();
+  c.translate(cx, cy);
+  c.rotate(((m.rot || 0) * Math.PI) / 180);
+  c.beginPath();
+  if (m.shape === "split") c.rect(-L, 0, 2 * L, L); // keeps the part below the line
+  else if (m.shape === "band") c.rect(-L, -h / 2, 2 * L, h);
+  else shapeOutline(c, m.shape, w, h, m.radius);
+  c.restore();
+}
+
+// ---------- shapes (shape layers and mask outlines) ----------
+
+/** Shape layers: [type, label, group]. Lines and line arrows are drawn as strokes only. */
+export const SHAPES = [
+  ["rect", "Rectangle", "basic"], ["rounded", "Rounded rectangle", "basic"], ["square", "Square", "basic"], ["circle", "Circle", "basic"],
+  ["ellipse", "Ellipse", "basic"], ["triangle", "Triangle", "basic"], ["rtriangle", "Right triangle", "basic"], ["diamond", "Diamond", "basic"],
+  ["pentagon", "Pentagon", "basic"], ["hexagon", "Hexagon", "basic"], ["octagon", "Octagon", "basic"], ["star", "Star", "basic"],
+  ["star6", "6-point star", "basic"], ["heart", "Heart", "basic"], ["plus", "Plus", "basic"], ["cross", "Cross", "basic"],
+  ["bubble", "Speech bubble", "basic"], ["line", "Line", "basic"],
+  ["arrow", "Arrow", "arrows"], ["arrow2", "Double arrow", "arrows"], ["chevron", "Chevron", "arrows"], ["larrow", "Line arrow", "arrows"],
+  ["larrow2", "Double line arrow", "arrows"], ["carrow", "Curved arrow", "arrows"], ["uarrow", "U-turn arrow", "arrows"],
+];
+export const LINE_SHAPES = new Set(["line", "larrow", "larrow2", "carrow"]);
+export const EQUAL_SIDES = new Set(["square", "circle"]);
+
+const poly = (c, pts) => { pts.forEach(([x, y], i) => c[i ? "lineTo" : "moveTo"](x, y)); c.closePath(); };
+const regular = (c, n, w, h, inner = 0, rot = -Math.PI / 2) => {
+  const pts = [];
+  const k = inner ? 2 * n : n;
+  for (let i = 0; i < k; i++) {
+    const r = inner && i % 2 ? inner : 1, a = rot + (i * 2 * Math.PI) / k;
+    pts.push([(Math.cos(a) * r * w) / 2, (Math.sin(a) * r * h) / 2]);
+  }
+  poly(c, pts);
+};
+
+/** Adds a shape's outline (centred on 0,0, w × h) to the current path. radius: 0–1 corner rounding. */
+export function shapeOutline(c, type, w, h, radius = 0) {
+  const x = (u) => (u * w) / 2, y = (v) => (v * h) / 2;
+  switch (type) {
+    case "rect": case "square": case "rounded":
+      c.roundRect(-w / 2, -h / 2, w, h, Math.max(0, Math.min(1, radius ?? 0)) * Math.min(w, h) / 2); break;
+    case "circle": case "ellipse": c.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2); break;
+    case "triangle": poly(c, [[0, -h / 2], [w / 2, h / 2], [-w / 2, h / 2]]); break;
+    case "rtriangle": poly(c, [[-w / 2, -h / 2], [w / 2, h / 2], [-w / 2, h / 2]]); break;
+    case "diamond": poly(c, [[0, -h / 2], [w / 2, 0], [0, h / 2], [-w / 2, 0]]); break;
+    case "pentagon": regular(c, 5, w, h); break;
+    case "hexagon": regular(c, 6, w, h, 0, 0); break;
+    case "octagon": regular(c, 8, w, h, 0, Math.PI / 8); break;
+    case "star": c.save(); c.translate(0, h * 0.06); regular(c, 5, w, h, 0.42); c.restore(); break;
+    case "star6": regular(c, 6, w, h, 0.55); break;
+    case "heart":
+      c.moveTo(x(0), y(1));
+      c.bezierCurveTo(x(-0.35), y(0.62), x(-1), y(0.25), x(-1), y(-0.3));
+      c.bezierCurveTo(x(-1), y(-0.85), x(-0.4), y(-1.12), x(0), y(-0.55));
+      c.bezierCurveTo(x(0.4), y(-1.12), x(1), y(-0.85), x(1), y(-0.3));
+      c.bezierCurveTo(x(1), y(0.25), x(0.35), y(0.62), x(0), y(1));
+      c.closePath(); break;
+    case "plus": case "cross": {
+      const t = Math.min(w, h) * 0.17;
+      if (type === "cross") { c.save(); c.rotate(Math.PI / 4); }
+      poly(c, [[-t, -h / 2], [t, -h / 2], [t, -t], [w / 2, -t], [w / 2, t], [t, t], [t, h / 2], [-t, h / 2], [-t, t], [-w / 2, t], [-w / 2, -t], [-t, -t]]);
+      if (type === "cross") c.restore();
+      break;
+    }
+    case "bubble": {
+      const bh = h * 0.78, r = Math.min(w, bh) * 0.25;
+      c.moveTo(-w / 2 + r, -h / 2);
+      c.arcTo(w / 2, -h / 2, w / 2, -h / 2 + bh, r);
+      c.arcTo(w / 2, -h / 2 + bh, -w / 2, -h / 2 + bh, r);
+      c.lineTo(-w * 0.1, -h / 2 + bh); c.lineTo(-w * 0.28, h / 2); c.lineTo(-w * 0.26, -h / 2 + bh);
+      c.arcTo(-w / 2, -h / 2 + bh, -w / 2, -h / 2, r);
+      c.arcTo(-w / 2, -h / 2, w / 2, -h / 2, r);
+      c.closePath(); break;
+    }
+    case "line": c.moveTo(-w / 2, 0); c.lineTo(w / 2, 0); break;
+    case "larrow": case "larrow2": {
+      const hs = Math.min(h / 2, w * 0.25);
+      c.moveTo(-w / 2, 0); c.lineTo(w / 2, 0);
+      c.moveTo(w / 2 - hs, -hs); c.lineTo(w / 2, 0); c.lineTo(w / 2 - hs, hs);
+      if (type === "larrow2") { c.moveTo(-w / 2 + hs, -hs); c.lineTo(-w / 2, 0); c.lineTo(-w / 2 + hs, hs); }
+      break;
+    }
+    case "carrow": {
+      // An arc from bottom-left over to bottom-right, with an arrow head at the end.
+      const ex = w / 2, ey = h / 2 - h * 0.1, hs = Math.min(w, h) * 0.22;
+      c.moveTo(-w / 2, h / 2 - h * 0.1);
+      c.quadraticCurveTo(0, -h / 2 - h * 0.45, ex, ey);
+      c.moveTo(ex - hs, ey - hs * 0.15); c.lineTo(ex, ey); c.lineTo(ex + hs * 0.1, ey - hs);
+      break;
+    }
+    case "arrow": {
+      const sh = h * 0.45, hl = Math.min(w * 0.45, h * 0.9);
+      poly(c, [[-w / 2, -sh / 2], [w / 2 - hl, -sh / 2], [w / 2 - hl, -h / 2], [w / 2, 0], [w / 2 - hl, h / 2], [w / 2 - hl, sh / 2], [-w / 2, sh / 2]]);
+      break;
+    }
+    case "arrow2": {
+      const sh = h * 0.45, hl = Math.min(w * 0.3, h * 0.9);
+      poly(c, [[-w / 2, 0], [-w / 2 + hl, -h / 2], [-w / 2 + hl, -sh / 2], [w / 2 - hl, -sh / 2], [w / 2 - hl, -h / 2], [w / 2, 0],
+        [w / 2 - hl, h / 2], [w / 2 - hl, sh / 2], [-w / 2 + hl, sh / 2], [-w / 2 + hl, h / 2]]);
+      break;
+    }
+    case "chevron": {
+      const t = Math.min(w * 0.45, h / 2);
+      poly(c, [[-w / 2, -h / 2], [w / 2 - t, -h / 2], [w / 2, 0], [w / 2 - t, h / 2], [-w / 2, h / 2], [-w / 2 + t, 0]]);
+      break;
+    }
+    case "uarrow": {
+      // A thick U: the right arm, round the bottom, up the left arm to an arrow head pointing up.
+      const t = Math.min(w, h) * 0.2, head = t * 0.7, hl = Math.min(h * 0.3, w * 0.35);
+      const cx = 0, cy = h / 2 - w / 2, ro = w / 2 - head, ri = ro - t;
+      c.moveTo(cx + ro, -h / 2);
+      c.lineTo(cx + ro, cy);
+      c.arc(cx, cy, ro, 0, Math.PI);
+      c.lineTo(cx - ro, -h / 2 + hl);
+      c.lineTo(cx - ro - head, -h / 2 + hl);
+      c.lineTo(cx - ro + t / 2, -h / 2);
+      c.lineTo(cx - ri + head, -h / 2 + hl);
+      c.lineTo(cx - ri, -h / 2 + hl);
+      c.lineTo(cx - ri, cy);
+      c.arc(cx, cy, ri, Math.PI, 0, true);
+      c.lineTo(cx + ri, -h / 2);
+      c.closePath();
+      break;
+    }
+    default: c.rect(-w / 2, -h / 2, w, h);
+  }
+}
+
+/** Shape size in canvas pixels (k = canvas width / 1920). */
+export const shapeSize = (s, k) => ({ w: s.w * k, h: (EQUAL_SIDES.has(s.type) ? s.w : s.h) * k });
+
+/** Draws a shape layer's shape at the origin (the caller has applied position, rotation and scale). */
+function drawShape(c, s, k) {
+  const { w, h } = shapeSize(s, k);
+  const lw = Math.max(1, (s.strokeW ?? 8) * k);
+  c.beginPath();
+  shapeOutline(c, s.type, w, h, s.type === "rounded" ? s.radius ?? 0.35 : s.radius);
+  c.lineJoin = "round"; c.lineCap = "round"; c.lineWidth = lw;
+  if (LINE_SHAPES.has(s.type)) { c.strokeStyle = s.mode === "outline" ? s.stroke || "#fff" : s.fill || "#fff"; c.stroke(); return; }
+  if (s.mode !== "outline") { c.fillStyle = s.fill || "#fff"; c.fill(); }
+  if (s.mode === "outline" || s.mode === "both") { c.strokeStyle = s.stroke || "#fff"; c.stroke(); }
 }
 
 /** A cleared, transparent full-frame canvas for drawing one layer before its effects. */
@@ -332,6 +520,12 @@ export function itemBounds(project, kind, item, W, H, t) {
     const r = (tr.rotation * Math.PI) / 180;
     const dx = ox * Math.cos(r) - oy * Math.sin(r), dy = ox * Math.sin(r) + oy * Math.cos(r);
     return { cx: tr.x + dx / W, cy: tr.y + dy / H, w: (fw * (1 - c.l - c.r)) / W, h: (fh * (1 - c.t - c.b)) / H, rotation: tr.rotation };
+  }
+  if (item.shape) {
+    const { w, h } = shapeSize(item.shape, W / 1920);
+    const sw = item.shape.mode === "fill" && !LINE_SHAPES.has(item.shape.type) ? 0 : (item.shape.strokeW ?? 8) * (W / 1920);
+    const tr = t == null ? { x: item.x, y: item.y, scale: item.scale || 1, rotation: item.rotation || 0 } : transformAt(item, lt, true);
+    return { cx: tr.x, cy: tr.y, w: ((w + sw) * tr.scale) / W, h: ((h + sw) * tr.scale) / H, rotation: tr.rotation };
   }
   const st = item.style;
   const size = st.size * (W / 1920);
@@ -376,6 +570,7 @@ export function drawText(ctx, item, t, W, H) {
   ctx.translate(tr.x * W + a.dx * W, tr.y * H + a.dy * H);
   ctx.rotate((tr.rotation * Math.PI) / 180);
   ctx.scale(a.scale * tr.scale, a.scale * tr.scale);
+  if (item.shape) { drawShape(ctx, item.shape, W / 1920); ctx.restore(); return; }
   ctx.font = textFont(st, size);
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
@@ -429,6 +624,12 @@ export function drawText(ctx, item, t, W, H) {
     const lw = lineW(line);
     let x = st.align === "left" ? -maxW / 2 : st.align === "right" ? maxW / 2 - lw : -lw / 2;
     ctx.textAlign = "left";
+    if (st.underline && lw > 0) {
+      ctx.fillStyle = st.color;
+      setShadow(true);
+      ctx.fillRect(x, y + size * 0.45, lw, Math.max(1, size * 0.07));
+      setShadow(false);
+    }
     for (const ch of line) {
       const cw = ctx.measureText(ch).width;
       const hl = activeRange && charIndex >= activeRange[0] && charIndex < activeRange[1];

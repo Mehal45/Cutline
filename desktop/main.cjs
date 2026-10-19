@@ -79,7 +79,7 @@ ipcMain.handle("cutline:save", async (e, json, current, name) => {
   let target = current;
   if (!target) {
     const r = await dialog.showSaveDialog(BrowserWindow.fromWebContents(e.sender), {
-      title: "Save project", defaultPath: path.join(app.getPath("documents"), `${name || "Untitled"}.cutline`), filters,
+      title: "Save project", defaultPath: path.join(await projectsDir(), `${name || "Untitled"}.cutline`), filters,
     });
     if (r.canceled || !r.filePath) return null;
     target = r.filePath;
@@ -109,7 +109,7 @@ app.on("open-file", (e, p) => { e.preventDefault(); sendOpen(p); }); // macOS
 
 // Untitled projects are saved on close to Documents > Cutline Projects > "Untitled project N.cutline".
 ipcMain.handle("cutline:untitled-path", async () => {
-  const dir = path.join(app.getPath("documents"), "Cutline Projects");
+  const dir = await projectsDir();
   await fs.promises.mkdir(dir, { recursive: true });
   for (let n = 1; ; n++) {
     const p = path.join(dir, `Untitled project ${n}.cutline`);
@@ -239,6 +239,7 @@ async function createWindow() {
     webPreferences: { contextIsolation: true, sandbox: true, preload: path.join(__dirname, "preload.cjs") },
   });
   win.once("ready-to-show", () => win.show());
+  handleDownloads(win);
   win.webContents.setVisualZoomLevelLimits(1, 1); // no pinch-zoom of the whole window
   // With no menu on Windows/Linux, keep the developer tools reachable with Ctrl+Shift+I / F12.
   win.webContents.on("before-input-event", (e, input) => {
@@ -266,6 +267,44 @@ async function createWindow() {
   });
   win.on("closed", () => { win = null; });
   await win.loadURL(`http://127.0.0.1:${port}/`);
+}
+
+// Settings › Performance: graphics acceleration can be turned off (read before the app starts).
+try { if (JSON.parse(fs.readFileSync(prefsPath(), "utf8"))?.settings?.gpu === false) app.disableHardwareAcceleration(); } catch { /* no prefs yet */ }
+
+/** The user's settings from prefs.json (Menu › Settings). */
+async function userSettings() {
+  try { return JSON.parse(await fs.promises.readFile(prefsPath(), "utf8"))?.settings || {}; } catch { return {}; }
+}
+const projectsDir = async () => {
+  const d = (await userSettings()).projectsDir;
+  if (d && fs.existsSync(d)) return d;
+  const def = path.join(app.getPath("documents"), "Cutline Projects");
+  await fs.promises.mkdir(def, { recursive: true }).catch(() => {});
+  return def;
+};
+
+ipcMain.handle("cutline:pick-folder", async (e, start) => {
+  const r = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender), {
+    title: "Choose a folder", defaultPath: start || app.getPath("documents"), properties: ["openDirectory", "createDirectory"],
+  });
+  return r.canceled ? null : r.filePaths[0] || null;
+});
+
+/** Saved files (exported MP4 / PNG / WAV): straight into Settings › Export folder, or a Save dialog starting there. */
+function handleDownloads(w) {
+  w.webContents.session.on("will-download", async (_e, item) => {
+    const s = await userSettings().catch(() => ({}));
+    const dir = s.exportDir && fs.existsSync(s.exportDir) ? s.exportDir : app.getPath("downloads");
+    const name = item.getFilename();
+    if (s.exportDir && s.askExportPath === false) {
+      const ext = path.extname(name), base = path.basename(name, ext);
+      let target = path.join(dir, name);
+      for (let n = 2; fs.existsSync(target); n++) target = path.join(dir, `${base} (${n})${ext}`);
+      item.setSavePath(target);
+      item.once("done", (_ev, state) => { if (state === "completed") w.webContents.send("cutline:saved-file", target); });
+    } else item.setSaveDialogOptions({ defaultPath: path.join(dir, name) });
+  });
 }
 
 // One window only: opening Cutline again focuses the existing one.

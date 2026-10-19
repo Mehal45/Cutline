@@ -5,6 +5,7 @@
 import { getState, setState, projectDuration, stackTexts } from "./store.js";
 import { toast } from "./actions.js";
 import { rootProject, resetCompounds } from "./compound.js";
+import { setting, loadSettings } from "./settings.js";
 
 export const desktop = typeof window !== "undefined" ? window.cutlineDesktop : null;
 const EMBED_LIMIT = 40e6; // bytes
@@ -210,6 +211,13 @@ function previewThumb() {
   return c.toDataURL("image/jpeg", 0.72);
 }
 
+/** Settings › "When Cutline opens: open the last project". */
+export async function openLastProject() {
+  if (!desktop?.recentList || (await loadSettings()).startScreen !== "last") return false;
+  const r = (await desktop.recentList()).find((x) => x.exists);
+  return r ? openRecent(r.path) : false;
+}
+
 /** Opens a project from its path (recent list). */
 export async function openRecent(path) {
   const f = await desktop?.openPath?.(path);
@@ -247,17 +255,19 @@ export function saveQuietly() {
   return saving;
 }
 
-let lastAuto = null;
+let lastAuto = null, lastAutoAt = 0;
 export function startAutosave() {
   if (!desktop) return;
   setInterval(async () => {
     const p = rootProject();
+    const every = setting("autosaveSec") ?? 20; // Settings › Autosave (0 = only when closing)
+    if (!every || Date.now() - lastAutoAt < every * 1000 - 500) return;
     if (p === lastAuto || !hasContent(p) || !isDirty()) return;
-    lastAuto = p;
+    lastAuto = p; lastAutoAt = Date.now();
     if (currentPath) return saveQuietly();
     // Untitled: a recovery copy (restored automatically if Cutline crashes); closing saves it properly.
     try { await desktop.autosave(await serialize(p)); setState({ autoSavedAt: Date.now() }); } catch { /* ignore */ }
-  }, 20000);
+  }, 5000);
   desktop.onBeforeClose?.(() => saveQuietly());
 }
 

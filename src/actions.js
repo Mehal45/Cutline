@@ -4,6 +4,7 @@ import {
   compactTracks,
 } from "./store.js";
 import { allVideoElements, clipSpeed, elementFor } from "./engine.js";
+import { setting, lastDur } from "./settings.js";
 import { resumeLive } from "./audiofx.js";
 import { splitKeyframes, shiftKeyframes, setKey, removeKey, removeKeysAt, keyAt, propAt, hasKeys, setStatic } from "./keyframes.js";
 import { EFFECTS, FILTERS } from "./fx.js";
@@ -74,7 +75,7 @@ function probe(kind, url) {
   return new Promise((resolve) => {
     if (kind === "image") {
       const img = new Image();
-      img.onload = () => resolve({ duration: 5, w: img.naturalWidth, h: img.naturalHeight });
+      img.onload = () => resolve({ duration: setting("imageDur") || 5, w: img.naturalWidth, h: img.naturalHeight });
       img.onerror = () => resolve(null);
       img.src = url;
     } else {
@@ -240,8 +241,9 @@ export function addText(preset = {}) {
   const id = uid();
   edit((p) => p.texts.push({
     id, start: time, dur: 3, text: "Your text", x: 0.5, y: 0.5, scale: 1, rotation: 0, oneLine: true,
+    dur: setting("textDur"),
     style: { ...defaultTextStyle(), ...preset.style },
-    anim: { in: { type: "fade", dur: 0.4 }, out: { type: "fade", dur: 0.4 }, ...preset.anim },
+    anim: { in: { type: "fade", dur: lastDur("textAnim.in", 0.4) }, out: { type: "fade", dur: lastDur("textAnim.out", 0.4) }, ...preset.anim },
     ...(preset.text ? { text: preset.text } : {}),
   }));
   setState({ selection: [{ kind: "text", id }] });
@@ -691,7 +693,7 @@ export function setClipSpeed(speed, ids) {
  * Applies a transition. Targets, in order: selected cuts (◆), the cut after each selected clip,
  * otherwise the cut nearest the playhead. `all` applies to every cut.
  */
-export function applyTransition(type, dur = 0.6, all = false) {
+export function applyTransition(type, dur = lastDur("transition", 0.6), all = false) {
   const { project, selection, time } = getState();
   const segs = layoutMain(project);
   if (segs.length < 2) return toast("Add at least two clips to use transitions");
@@ -942,4 +944,40 @@ export function detachAudio() {
     it.mute = true;
   }));
   toast("Audio detached to an audio track");
+}
+
+// ---------------- copy / paste settings ----------------
+
+/** What "Copy settings" leaves out: what the item is (its words or footage) and where it sits on the timeline. */
+const NOT_SETTINGS = new Set(["id", "text", "words", "caption", "start", "dur", "track", "mediaId", "in", "speed", "speedCurve", "transition", "gap", "shape"]);
+const groupOf = (kind) => (kind === "text" ? "text" : kind === "main" || kind === "overlay" ? "clip" : kind);
+
+/** Ctrl+Alt+C: copies every setting of the selected text or clip (style, font, animation, position, effects…). */
+export function copySettings() {
+  const { selection, project } = getState();
+  const s = selection.find((x) => ["text", "main", "overlay", "audio", "effect"].includes(x.kind));
+  const it = s && findItem(project, s.kind, s.id);
+  if (!it) return toast("Select a text or clip to copy its settings");
+  const data = Object.fromEntries(Object.entries(it).filter(([k]) => !NOT_SETTINGS.has(k)).map(([k, v]) => [k, structuredClone(v)]));
+  // A shape's colours and outline are its settings (its type and size stay with each shape).
+  if (it.shape) data.shapeLook = { fill: it.shape.fill, stroke: it.shape.stroke, strokeW: it.shape.strokeW, mode: it.shape.mode };
+  setState({ settingsClip: { group: groupOf(s.kind), data, from: it.shape ? "shape" : s.kind === "text" ? "text" : "clip" } });
+  toast("Settings copied — select other items and press Paste settings (Ctrl+Alt+V)");
+}
+
+/** Ctrl+Alt+V: gives every selected item of the same type the copied settings (their words / footage / timing stay). */
+export function pasteSettings() {
+  const { selection, settingsClip } = getState();
+  if (!settingsClip) return toast("Copy the settings of a text or clip first (Ctrl+Alt+C)");
+  const targets = selection.filter((x) => groupOf(x.kind) === settingsClip.group);
+  if (!targets.length) return toast(`Select ${settingsClip.group === "text" ? "texts" : settingsClip.group === "clip" ? "clips" : "items"} to paste the settings onto`);
+  const { shapeLook, ...data } = settingsClip.data;
+  edit((p) => targets.forEach((t) => {
+    const it = findItem(p, t.kind, t.id);
+    if (!it) return;
+    for (const k of Object.keys(it)) if (!NOT_SETTINGS.has(k) && !(k in data) && (k === "keyframes" || k === "mask" || k === "crop" || k === "fx" || k === "filter" || k === "adjust" || k === "shadow")) delete it[k];
+    for (const [k, v] of Object.entries(data)) it[k] = structuredClone(v);
+    if (it.shape && shapeLook) it.shape = { ...it.shape, ...shapeLook };
+  }));
+  toast(`Pasted settings onto ${targets.length} item${targets.length > 1 ? "s" : ""}`);
 }

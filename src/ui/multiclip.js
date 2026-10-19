@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useStore, edit, editLive, findItem, getState } from "../store.js";
 import { clipSpeed } from "../engine.js";
-import { deleteSelection, copySelection, duplicateSelection, mergeClips, setClipSpeed, SPEED_PRESETS } from "../actions.js";
+import { deleteSelection, pasteSettings, copySelection, duplicateSelection, mergeClips, setClipSpeed, SPEED_PRESETS } from "../actions.js";
 import { ADJUST, FILTERS, EFFECTS, EFFECT_CATEGORIES } from "../fx.js";
 import { VOICE_EFFECTS } from "../audiofx.js";
 import { uid } from "../store.js";
@@ -186,6 +186,7 @@ export function MultiClipInspector({ selection, project, textPanel, Shell }) {
   const strip = (list) => list.map(({ kind, id }) => ({ kind, id }));
   const key = (list) => list.map((c) => c.id).join();
   return html`<${Shell} tabs=${tabs} tab=${t} setTab=${setTab} note=${`${selection.length} selected`}>
+    <div class="copybar"><button onClick=${pasteSettings} disabled=${!getState().settingsClip} title="Paste copied settings onto every selected clip (Ctrl+Alt+V)"><${Icon} n="clipboard-paste" /> Paste settings onto all selected</button></div>
     ${t === "audio" && html`<${MultiAudio} key=${key(sound)} targets=${strip(sound)} items=${sound.map((c) => c.item)} />`}
     ${t === "adjust" && html`<${MultiAdjust} key=${key(visual)} targets=${strip(visual)} items=${visual.map((c) => c.item)} />`}
     ${t === "speed" && html`<${MultiSpeed} targets=${strip(clips)} items=${clips.map((c) => c.item)} />`}

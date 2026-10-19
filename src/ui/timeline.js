@@ -8,7 +8,7 @@ import { clipSpeed, TRANSITIONS } from "../engine.js";
 import { hasCurve, sourceAt } from "../speed.js";
 import {
   pause, seek, splitAtPlayhead, deleteSelection, rippleDelete, duplicateSelection, addText, freezeFrame, splitItemAt,
-  addMediaToTimeline, importFiles, clampZoom, zoomToFit, ZOOM_MIN, ZOOM_MAX, toast, trimToPlayhead, mirrorSelection,
+  addMediaToTimeline, importFiles, copySettings, pasteSettings, clampZoom, zoomToFit, ZOOM_MIN, ZOOM_MAX, toast, trimToPlayhead, mirrorSelection,
   detachAudio, zoomTimeline, easeSpeedAtCut, neighbour, resetSpeedCurve, toggleMute, applyTransition, setTextSound,
 } from "../actions.js";
 import { createCompound, openCompound, closeCompound, breakApart } from "../compound.js";
@@ -17,6 +17,9 @@ import { keyTimes, shiftKeyframes, moveKeyTime, removeKeysAt } from "../keyframe
 import { decodeMedia } from "../media-audio.js";
 import { addDefaultText } from "../presets.js";
 import { startReplace, ReplaceDialog } from "./replace.js";
+import { startCrop } from "./mask.js";
+import { shapeName } from "./shapes.js";
+import { lastDur } from "../settings.js";
 import { html, fmt, Icon } from "./kit.js";
 
 const additiveKey = (e) => e.shiftKey || e.ctrlKey || e.metaKey;
@@ -378,10 +381,8 @@ export function Timeline() {
   const scrub = (e) => {
     if (getState().playing) pause();
     seek(timeAt(e.clientX));
-    const move = (ev) => seek(timeAt(ev.clientX));
-    const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    // Dragging the playhead to the left / right edge scrolls the timeline along with it.
+    dragGesture(e, (ev) => seek(Math.max(0, timeAt(ev.clientX))), { undoable: false, scroll: scroller.current });
   };
 
   // Rubber-band selection on empty track space; a plain click seeks instead.
@@ -717,6 +718,8 @@ export function Timeline() {
     const items = [
       { label: "Split at playhead", icon: "scissors", onClick: splitAtPlayhead },
       { label: "Duplicate", icon: "copy", onClick: duplicateSelection },
+      { label: "Copy settings (Ctrl+Alt+C)", icon: "clipboard-copy", onClick: copySettings },
+      ...(getState().settingsClip ? [{ label: "Paste settings (Ctrl+Alt+V)", icon: "clipboard-paste", onClick: pasteSettings }] : []),
       ...(kind !== "text" && kind !== "effect" ? [{ label: item.mute ? "Unmute" : "Mute", icon: item.mute ? "volume-2" : "volume-x", onClick: toggleMute }] : []),
       ...(hasCurve(item) ? [{ label: "Remove speed curve", icon: "rotate-ccw", onClick: () => resetSpeedCurve(kind, item.id) }] : []),
       { label: "Delete", icon: "trash-2", onClick: deleteSelection },
@@ -791,6 +794,7 @@ export function Timeline() {
       <span class="sep"></span>
       <button class="ibtn" onClick=${() => freezeFrame()} title="Freeze frame (F)"><${Icon} n="snowflake" /></button>
       <button class="ibtn" onClick=${mirrorSelection} title="Mirror"><${Icon} n="flip-horizontal-2" /></button>
+      <button class="ibtn" onClick=${startCrop} title="Crop the selected clip"><${Icon} n="crop" /></button>
       <button class="ibtn" onClick=${duplicateSelection} title="Duplicate (Ctrl+D)"><${Icon} n="copy" /></button>
       <button class="ibtn" onClick=${detachAudio} title="Detach audio to its own track"><${Icon} n="audio-lines" /></button>
       <button class="ibtn" onClick=${() => addDefaultText()} title="Add text (T) — uses your ★ default preset if set"><${Icon} n="type" /></button>
@@ -835,7 +839,7 @@ export function Timeline() {
 
         ${textTracks.map((tr) => html`<div class=${"track text-track" + (trackFlags(project, "text").locked ? " locked" : "") + (trackFlags(project, "text").hidden ? " hidden" : "")} data-lane="text" data-track=${tr} key=${"t" + tr}>
           <${TrackHead} k="text" label=${`Text${textTracks.length > 1 ? " " + (tr + 1) : ""}`} icon="type" project=${project} mute=${false} />
-          ${project.texts.filter((t) => (t.track ?? 0) === tr).map((t) => laneItem("text", t, "text" + (t.caption ? " caption" : ""), t.text,
+          ${project.texts.filter((t) => (t.track ?? 0) === tr).map((t) => laneItem("text", t, "text" + (t.caption ? " caption" : "") + (t.shape ? " shape" : ""), t.shape ? "◆ " + shapeName(t.shape.type) : t.text,
             t.sound && project.media[t.sound.mediaId] ? html`<b class="badge sndbadge" title=${"Sound: " + project.media[t.sound.mediaId].name}>🔊</b>` : null))}
         </div>`)}
 
@@ -908,7 +912,7 @@ export function Timeline() {
                   }}
                   onPointerDown=${(e) => {
                     e.stopPropagation();
-                    if (!s.transition) edit((p) => (p.main.find((y) => y.id === s.id).transition = { type: "crossfade", dur: 0.6 }));
+                    if (!s.transition) edit((p) => (p.main.find((y) => y.id === s.id).transition = { type: "crossfade", dur: lastDur("transition", 0.6) }));
                     pick(e, "transition", s.id);
                   }}>◆</div>`}
             <//>`;
@@ -932,7 +936,9 @@ export function Timeline() {
         <${TrimTip} />
         <${ContextMenu} />
         <${ReplaceDialog} />
-        <div class="playhead" style=${{ left: LABEL + time * zoom }} />
+        <div class="playhead" style=${{ left: LABEL + time * zoom }}>
+          <i class="ph-grab" title="Drag the playhead" onPointerDown=${(e) => { e.stopPropagation(); scrub(e); }} />
+        </div>
       </div>
     </div>
   </section>`;
