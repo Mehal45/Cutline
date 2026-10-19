@@ -439,6 +439,22 @@ function TransformOverlay({ rect }) {
     });
   };
 
+  // Text box width (side handles): wider = fewer line breaks; wide enough and it's one line.
+  const startBoxWidth = (e, item) => {
+    const b = bounds("text", item);
+    const r = ref.current.getBoundingClientRect();
+    const cx = r.left + b.cx * r.width, cy = r.top + b.cy * r.height;
+    const rad = (b.rotation * Math.PI) / 180;
+    const scale = getXY("text", item).scale || 1;
+    dragGesture(e, (ev) => {
+      // Distance from the centre along the text's own horizontal axis, in frame pixels.
+      const dx = ev.clientX - cx, dy = ev.clientY - cy;
+      const half = Math.abs(dx * Math.cos(rad) + dy * Math.sin(rad)) * (W / r.width);
+      const boxW = Math.max(0.03, Math.min(5, (2 * half) / scale / W));
+      editLive((p) => { const t = p.texts.find((x) => x.id === item.id); if (t) { t.boxW = boxW; delete t.oneLine; } });
+    });
+  };
+
   const startRotate = (e, kind, item) => {
     const b = bounds(kind, item);
     const r = ref.current.getBoundingClientRect();
@@ -472,6 +488,8 @@ function TransformOverlay({ rect }) {
           }}>
         ${single && ["nw", "ne", "sw", "se"].map((c) => html`<div key=${c} class=${"knob " + c}
           onPointerDown=${(e) => startScale(e, kind, item)} />`)}
+        ${single && kind === "text" && ["w", "e"].map((c) => html`<div key=${c} class=${"knob " + c} title="Drag to make the text box wider or narrower (wider = fewer lines)"
+          onPointerDown=${(e) => startBoxWidth(e, item)} />`)}
         ${single && html`<div class="rot" title="Rotate (Shift snaps to 15°)" onPointerDown=${(e) => startRotate(e, kind, item)} />`}
       </div>`;
     })}

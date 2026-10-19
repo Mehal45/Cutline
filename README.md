@@ -11,6 +11,7 @@ A free, open-source CapCut-style video editor for Windows and Mac. No account, n
 - **My presets:** save a text's whole look (font, size, colour, shadow, position, animation, length) and add it again in one click (or make it the default for **T** / Add text); save adjustment layers and audio settings (volume, fades, cleanup, voice effect) the same way
 - **Edit many clips at once:** select several clips and the inspector shows Audio (volume, ±dB that keeps their balance, mute, fades, cleanup, voice effect), Adjust (filter, colour, effects) and Speed for all of them; audio and adjustment presets apply to every selected clip in one click
 - **Media kits** (desktop app): save the music, sound effects and clips you use in every video and add them all to the library with one click
+- **Text boxes:** titles stay on one straight line (Enter starts a new one); drag the side handles in the preview to set a text box width it wraps to, and the corners to resize
 - **Titles:** 32 built-in fonts plus every font installed on your computer, outline, shadow, background plate, letter spacing and 18 presets
 - **Speed curves:** smooth speed ramps (e.g. normal → fast → normal) with presets and an editable curve, plus one-click smooth (ease in & out) motion for keyframes
 - **Preview quality** Full / ½ / ¼ for smooth playback on slower computers (export is always full quality)

@@ -11,7 +11,7 @@ const KEY = "cutline.textPresets";
 const desktop = typeof window !== "undefined" ? window.cutlineDesktop : null;
 
 /** The parts of a text item a preset keeps. */
-const LOOK = ["dur", "style", "x", "y", "scale", "rotation", "opacity", "anim", "keyframes", "sound"];
+const LOOK = ["dur", "style", "x", "y", "scale", "rotation", "opacity", "anim", "keyframes", "sound", "oneLine", "boxW"];
 
 async function read() {
   try {
@@ -161,7 +161,7 @@ export function addTextFromPreset(preset, text) {
   const id = uid();
   const look = structuredClone(preset.look);
   edit((p) => p.texts.push({
-    id, start: time, dur: 3, text: text ?? "Your text", x: 0.5, y: 0.5, scale: 1, rotation: 0,
+    id, start: time, dur: 3, text: text ?? "Your text", x: 0.5, y: 0.5, scale: 1, rotation: 0, oneLine: !preset.look.boxW,
     anim: { in: { type: "fade", dur: 0.4 }, out: { type: "fade", dur: 0.4 } },
     ...look,
     style: { ...look.style },
@@ -203,7 +203,7 @@ export function applyPresetToSelection(preset) {
   const look = preset.look;
   edit((p) => p.texts.forEach((t) => {
     if (!ids.has(t.id)) return;
-    for (const k of ["style", "x", "y", "scale", "rotation", "opacity", "anim", "keyframes", "sound"]) {
+    for (const k of ["style", "x", "y", "scale", "rotation", "opacity", "anim", "keyframes", "sound", "oneLine", "boxW"]) {
       if (look[k] !== undefined) t[k] = structuredClone(look[k]);
       else if (k === "keyframes") delete t.keyframes;
     }

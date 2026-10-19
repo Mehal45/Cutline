@@ -336,7 +336,7 @@ export function itemBounds(project, kind, item, W, H, t) {
   const size = st.size * (W / 1920);
   const m = measureCtx();
   m.font = textFont(st, size);
-  const lines = wrap(m, applyCase(item.text, st), W * 0.85);
+  const lines = wrap(m, applyCase(item.text, st), wrapWidth(item, W));
   const pad = st.bg ? size * (st.bgPad ?? 0.6) : size * 0.2;
   const spacing = (st.letterSpacing || 0) * size;
   const tw = Math.max(...lines.map((l) => m.measureText(l).width + Math.max(0, l.length - 1) * spacing)) + pad;
@@ -386,7 +386,7 @@ export function drawText(ctx, item, t, W, H) {
     : item.text.split(/(\s+)/).filter(Boolean).map((w) => ({ w }));
   let full = applyCase(words.map((w) => w.w).join(""), st);
   if (a.reveal < 1) full = full.slice(0, Math.round(full.length * a.reveal));
-  const lines = wrap(ctx, full, W * 0.85);
+  const lines = wrap(ctx, full, wrapWidth(item, W));
   const lh = size * (st.lineHeight || 1.2);
   const y0 = -((lines.length - 1) * lh) / 2;
   const spacing = (st.letterSpacing || 0) * size;
@@ -448,6 +448,13 @@ export function drawText(ctx, item, t, W, H) {
   });
   ctx.restore();
 }
+
+/**
+ * Where a text's lines break, in its own (unscaled) pixels: the text box width the user dragged
+ * (item.boxW, a fraction of the frame width), 85% of the frame by default, or never with item.oneLine
+ * (then only Enter starts a new line). Scaling the text doesn't move the breaks.
+ */
+export const wrapWidth = (item, W) => (item.oneLine ? Infinity : (item.boxW ?? 0.85) * W);
 
 function wrap(ctx, text, maxW) {
   const out = [];

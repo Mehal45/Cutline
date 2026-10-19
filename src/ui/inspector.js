@@ -468,6 +468,21 @@ function TextSoundSection({ t }) {
   <//>`;
 }
 
+/** One line vs wrapping inside the text box (whose width the side handles in the preview change). */
+function LineBreaks({ t }) {
+  const set = (fn) => edit((p) => { const x = p.texts.find((y) => y.id === t.id); if (x) fn(x); });
+  const mode = t.oneLine ? "one" : "wrap";
+  return html`<div class="linebreaks">
+    <div class="seg-ctl">
+      <button class=${mode === "one" ? "on" : ""} title="Keep the text on one straight line (Enter still starts a new line)"
+        onClick=${() => set((x) => { x.oneLine = true; delete x.boxW; })}>One line</button>
+      <button class=${mode === "wrap" ? "on" : ""} title="Break into lines to fit the text box"
+        onClick=${() => set((x) => { delete x.oneLine; })}>Wrap to box</button>
+    </div>
+    <p class="muted">${mode === "one" ? "Stays on one line. Drag a corner in the preview to resize it." : "Drag the side handles in the preview to make the box wider (fewer lines) or narrower."}</p>
+  </div>`;
+}
+
 /** Font, size, weight, case, alignment and spacing. `setSt(key, value, live)` decides which texts change. */
 function TextFontFields({ st, setSt }) {
   const installed = useStore((s) => s.systemFonts);
@@ -588,6 +603,7 @@ function TextInspector({ t }) {
     ${tab === "text" && html`
       <textarea rows="3" value=${t.text} onChange=${(e) => set((x) => { x.text = e.target.value; delete x.words; })} />
       ${t.caption && t.words && html`<p class="muted">Editing the text removes word-by-word highlighting for this caption.</p>`}
+      <${LineBreaks} t=${t} />
       <${TextFontFields} st=${st} setSt=${setSt} />
       <${TextSoundSection} t=${t} />
       <${TransformSection} kind="text" id=${t.id} />

@@ -239,7 +239,7 @@ export function addText(preset = {}) {
   const { time } = getState();
   const id = uid();
   edit((p) => p.texts.push({
-    id, start: time, dur: 3, text: "Your text", x: 0.5, y: 0.5, scale: 1, rotation: 0,
+    id, start: time, dur: 3, text: "Your text", x: 0.5, y: 0.5, scale: 1, rotation: 0, oneLine: true,
     style: { ...defaultTextStyle(), ...preset.style },
     anim: { in: { type: "fade", dur: 0.4 }, out: { type: "fade", dur: 0.4 }, ...preset.anim },
     ...(preset.text ? { text: preset.text } : {}),
