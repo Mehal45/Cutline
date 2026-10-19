@@ -101,6 +101,38 @@ const download = (blob, name) => {
   setTimeout(() => URL.revokeObjectURL(a.href), 10000);
 };
 
+// ---------------- resizable panels ----------------
+
+/** Widths of the library (left) and inspector (right) columns: dragged by the user, remembered. */
+const defaultCols = () => ({ left: Math.max(260, Math.round(window.innerWidth * 0.27)), right: Math.max(300, Math.round(window.innerWidth * 0.28)) });
+function useColumns() {
+  const saved = useStore((s) => s.panelCols);
+  const [, force] = useState(0);
+  useEffect(() => { const r = () => force((n) => n + 1); window.addEventListener("resize", r); return () => window.removeEventListener("resize", r); }, []);
+  const c = { ...defaultCols(), ...(saved || {}) };
+  // Always leave the player at least 360 px.
+  const room = window.innerWidth - 12 - 360;
+  if (c.left + c.right > room) { const k = room / (c.left + c.right); c.left = Math.round(c.left * k); c.right = Math.round(c.right * k); }
+  return c;
+}
+try { const c = JSON.parse(localStorage.getItem("cutline.panelCols") || "null"); if (c) setState({ panelCols: c }); } catch { /* ignore */ }
+
+/** The bar between two columns: drag to resize, double-click to reset. */
+function ColResize({ side }) {
+  const start = (e) => {
+    if (e.button !== 0) return;
+    const c0 = { ...defaultCols(), ...(getState().panelCols || {}) }, x0 = e.clientX;
+    dragGesture(e, (ev) => {
+      const d = ev.clientX - x0;
+      const max = window.innerWidth - 12 - 360 - (side === "left" ? c0.right : c0.left);
+      const w = Math.max(200, Math.min(max, side === "left" ? c0.left + d : c0.right - d));
+      setState({ panelCols: { ...c0, [side]: Math.round(w) } });
+    }, { undoable: false, onEnd: () => { try { localStorage.setItem("cutline.panelCols", JSON.stringify(getState().panelCols)); } catch {} } });
+  };
+  const reset = () => { const c = { ...(getState().panelCols || {}) }; delete c[side]; setState({ panelCols: c }); try { localStorage.setItem("cutline.panelCols", JSON.stringify(c)); } catch {} };
+  return html`<div class="col-resize" title="Drag to resize · double-click to reset" onPointerDown=${start} onDoubleClick=${reset} />`;
+}
+
 // ---------------- top bar ----------------
 
 function MainMenu({ onShortcuts, onExport }) {
@@ -947,13 +979,16 @@ function App() {
     window.addEventListener("wheel", noPageZoom, { passive: false });
     return () => window.removeEventListener("wheel", noPageZoom);
   }, []);
+  const cols = useColumns();
   return html`<div class="app" style=${{ gridTemplateRows: home ? "38px auto minmax(0, 1fr)" : `38px auto minmax(0, 1fr) ${timelineH}px` }}>
     <${Header} onExport=${() => setDialog("export")} onShortcuts=${() => setDialog("shortcuts")} />
     <div><${RecoveryBar} />${!home && html`<${RelinkBar} />`}</div>
     ${home ? html`<${Home} />` : html`
-    <main>
+    <main style=${{ gridTemplateColumns: `${cols.left}px 6px minmax(0, 1fr) 6px ${cols.right}px`, gap: 0 }}>
       <${LeftPanel} />
+      <${ColResize} side="left" />
       <${Player} />
+      <${ColResize} side="right" />
       <${Inspector} />
     </main>
     <${Timeline} />`}
