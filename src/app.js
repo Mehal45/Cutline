@@ -609,7 +609,8 @@ const SHORTCUTS = [
   ["Ctrl+Alt+C / Ctrl+Alt+V", "Copy settings / paste them onto the selected items"],
   ["Ctrl+A", "Select all"],
   ["S", "Split the selection (or the main clip) at the playhead"],
-  ["Ctrl+B", "Split everything under the playhead"],
+  ["S / Ctrl+B", "Split the selected items at the playhead (nothing selected: the main clip)"],
+  ["Ctrl+Shift+B", "Split everything under the playhead"],
   ["B", "Razor tool: click a clip to cut it there"],
   ["H / middle mouse drag", "Hand tool: drag to pan the timeline"],
   ["M", "Mute / unmute the selection"],
@@ -906,7 +907,7 @@ function useShortcuts(openShortcuts, openExport) {
         if (key === "v") return run(paste);
         if (key === "d") return run(duplicateSelection);
         if (key === "a") return run(selectAll);
-        if (key === "b") return run(splitAllAtPlayhead);
+        if (key === "b") return run(e.shiftKey ? splitAllAtPlayhead : splitAtPlayhead); // like CapCut: Ctrl+B cuts the selection
         if (key === "e") return run(openExport);
         if (key === "i" && !e.shiftKey) return run(() => document.getElementById("import-any")?.click());
         if (key === "w") return run(newProject);

@@ -799,7 +799,7 @@ export function Timeline() {
       <button class="ibtn" onClick=${undo} disabled=${!canUndo} title="Undo (Ctrl+Z)"><${Icon} n="undo-2" /></button>
       <button class="ibtn" onClick=${redo} disabled=${!canRedo} title="Redo (Ctrl+Y)"><${Icon} n="redo-2" /></button>
       <span class="sep"></span>
-      <button class="ibtn" onClick=${splitAtPlayhead} title="Split (S · Ctrl+B splits everything)"><${Icon} n="scissors" /></button>
+      <button class="ibtn" onClick=${splitAtPlayhead} title="Split the selected items (S or Ctrl+B · Ctrl+Shift+B splits everything)"><${Icon} n="scissors" /></button>
       <button class="ibtn" onClick=${() => trimToPlayhead("left")} title="Delete left of the playhead (Q)"><${Icon} n="arrow-left-to-line" /></button>
       <button class="ibtn" onClick=${() => trimToPlayhead("right")} title="Delete right of the playhead (W)"><${Icon} n="arrow-right-to-line" /></button>
       <button class="ibtn" onClick=${deleteSelection} title="Delete (Del)"><${Icon} n="trash-2" /></button>

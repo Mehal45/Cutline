@@ -126,7 +126,8 @@ Press **?** in the app for the full list. On a Mac, use ⌘ where it says Ctrl.
 | Shift + mouse wheel | Scroll the timeline sideways |
 | + / − · Ctrl+= / Ctrl+− · Ctrl+0 · Shift+Z | Zoom the timeline in / out · reset zoom · fit the whole project |
 | S | Split the selection (or the main clip) at the playhead |
-| Ctrl+B | Split everything under the playhead |
+| S / Ctrl+B | Split the selected items at the playhead |
+| Ctrl+Shift+B | Split everything under the playhead |
 | B | Razor tool: click a clip to cut it there |
 | H · middle mouse drag | Hand tool: drag to pan the timeline |
 | Delete · Shift+Delete · Esc | Delete · ripple delete · clear selection (or leave a tool) |
