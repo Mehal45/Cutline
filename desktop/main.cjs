@@ -291,6 +291,42 @@ ipcMain.handle("cutline:pick-folder", async (e, start) => {
   return r.canceled ? null : r.filePaths[0] || null;
 });
 
+// Video export straight to disk: pick the file (or use Settings › export folder), then the renderer streams
+// the MP4 into it piece by piece (positional writes), so big exports never have to fit in memory.
+const openExports = new Map(); // id -> { fh, path }
+ipcMain.handle("cutline:export-begin", async (e, name) => {
+  const s = await userSettings();
+  const dir = s.exportDir && fs.existsSync(s.exportDir) ? s.exportDir : app.getPath("downloads");
+  let target;
+  if (s.exportDir && s.askExportPath === false) {
+    const ext = path.extname(name), base = path.basename(name, ext);
+    target = path.join(dir, name);
+    for (let n = 2; fs.existsSync(target); n++) target = path.join(dir, `${base} (${n})${ext}`);
+  } else {
+    const r = await dialog.showSaveDialog(BrowserWindow.fromWebContents(e.sender), {
+      title: "Export video", defaultPath: path.join(dir, name), filters: [{ name: "MP4 video", extensions: ["mp4"] }],
+    });
+    if (r.canceled || !r.filePath) return null;
+    target = r.filePath;
+  }
+  const id = crypto.randomUUID();
+  openExports.set(id, { fh: await fs.promises.open(target, "w"), path: target });
+  return { id, path: target };
+});
+ipcMain.handle("cutline:export-write", async (_e, id, data, position) => {
+  const x = openExports.get(id);
+  if (!x) throw new Error("Export file is closed");
+  const buf = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+  await x.fh.write(buf, 0, buf.length, position);
+});
+ipcMain.handle("cutline:export-end", async (_e, id, abort) => {
+  const x = openExports.get(id);
+  if (!x) return;
+  openExports.delete(id);
+  await x.fh.close().catch(() => {});
+  if (abort) await fs.promises.unlink(x.path).catch(() => {});
+});
+
 /** Saved files (exported MP4 / PNG / WAV): straight into Settings › Export folder, or a Save dialog starting there. */
 function handleDownloads(w) {
   w.webContents.session.on("will-download", async (_e, item) => {

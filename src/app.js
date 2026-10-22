@@ -721,6 +721,7 @@ function ExportDialog({ onClose }) {
   const [progress, setProgress] = useState(0);
   const [phase, setPhase] = useState("idle");
   const [url, setUrl] = useState(null);
+  const [saved, setSaved] = useState(null); // desktop: where the video was written
   const [error, setError] = useState(null);
   const def = appSettings();
   const [res, setRes] = useState(def.exportRes === "project" ? Math.min(p.width, p.height) : def.exportRes);
@@ -743,7 +744,20 @@ function ExportDialog({ onClose }) {
     const started = performance.now();
     try {
       await loadProjectFonts(getState().project);
-      const blob = await exportMp4(rootProject(), setProgress, abort.current.signal, { ...size, fps, codec, quality, customKbps, encoder, software: encoder === "software", smooth: { method: smooth, blur } });
+      const o = { ...size, fps, codec, quality, customKbps, encoder, software: encoder === "software", smooth: { method: smooth, blur } };
+      if (desktop?.exportBegin) {
+        // Desktop: choose where to save first, then the video is written straight into that file.
+        const file = await desktop.exportBegin(projectName() + ".mp4");
+        if (!file) { setPhase("idle"); return; }
+        o.sink = { write: (d, p) => desktop.exportWrite(file.id, d, p), close: () => desktop.exportEnd(file.id) };
+        try { await exportMp4(rootProject(), setProgress, abort.current.signal, o); }
+        catch (err) { await desktop.exportEnd(file.id, true); throw err; }
+        setSaved(file.path);
+        setUrl(desktop.fileUrl(file.path));
+        setPhase(`in ${((performance.now() - started) / 1000).toFixed(1)}s`);
+        return;
+      }
+      const blob = await exportMp4(rootProject(), setProgress, abort.current.signal, o);
       setUrl(URL.createObjectURL(blob));
       setPhase(`in ${((performance.now() - started) / 1000).toFixed(1)}s · ${(blob.size / 1e6).toFixed(1)} MB`);
     } catch (err) {
@@ -815,7 +829,10 @@ function ExportDialog({ onClose }) {
       <button class="wide" onClick=${() => abort.current.abort()}>Cancel</button>`}
     ${url && html`<p class="status">Finished ${phase}</p>
       <video src=${url} controls class="result" />
-      <a class="button primary wide" href=${url} download=${projectName() + ".mp4"}>Save MP4</a>`}
+      ${saved
+        ? html`<p class="muted ell" title=${saved}>Saved to ${saved}</p>
+          <button class="primary wide" onClick=${() => desktop.showInFolder(saved)}><${Icon} n="folder-open" /> Show in folder</button>`
+        : html`<a class="button primary wide" href=${url} download=${projectName() + ".mp4"}>Save MP4</a>`}`}
     ${error && html`<p class="error">${error}</p>`}
   <//>`;
 }

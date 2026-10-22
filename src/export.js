@@ -1,5 +1,5 @@
 // Offline audio mix + frame-by-frame MP4 export with WebCodecs.
-import { Muxer, ArrayBufferTarget } from "mp4-muxer";
+import { Muxer, ArrayBufferTarget, StreamTarget } from "mp4-muxer";
 import { layoutMain, projectDuration } from "./store.js";
 import {
   drawFrame, renderLock, clipSpeed, activeClips, activeOverlays, exportFrames, seekClipElement, volumeAt, textSounds, visibleSources, compoundView,
@@ -254,12 +254,25 @@ async function exportOnce(project, onProgress, signal, opts = {}) {
   const usesCutout = [...project.main, ...(project.overlays || [])].some((x) => x.cutout?.mode);
   if (usesCutout && !(await loadCutout())) throw new Error("Background removal couldn't load (check your internet connection).");
   const audio = await pickAudioCodec(48000, 2);
-  const target = new ArrayBufferTarget();
+  // Desktop: the file is written to disk as it's made (opts.sink), so long or high-bitrate videos never have
+  // to fit in memory. Browser: the whole file is built in memory, then downloaded.
+  const sink = opts.sink;
+  let writing = Promise.resolve(), queued = 0, writeError = null;
+  const target = sink
+    ? new StreamTarget({
+      chunked: true, chunkSize: 8 * 2 ** 20,
+      onData: (data, position) => {
+        const copy = data.slice();
+        queued += copy.byteLength;
+        writing = writing.then(() => sink.write(copy, position)).then(() => { queued -= copy.byteLength; }, (e) => { writeError ||= e; });
+      },
+    })
+    : new ArrayBufferTarget();
   const muxer = new Muxer({
     target,
     video: { codec, width, height, frameRate: fps },
     audio: audio ? { codec: audio.muxCodec, numberOfChannels: 2, sampleRate: 48000 } : undefined,
-    fastStart: "in-memory",
+    fastStart: sink ? false : "in-memory",
   });
 
   let encodeError = null;
@@ -272,8 +285,33 @@ async function exportOnce(project, onProgress, signal, opts = {}) {
   const canvas = new OffscreenCanvas(width, height);
   const ctx = canvas.getContext("2d");
   const frames = Math.ceil(duration * fps);
-  const mixPromise = audio ? mixAudio(project, 48000, 2) : null; // runs alongside the video encode
-  mixPromise?.catch(() => {});
+  // The audio is mixed first and encoded alongside the video (a little ahead of it), so the file can be
+  // written out as it goes instead of holding every video frame until the audio is ready.
+  let aenc = null, audioAt = 0, mix = null;
+  if (audio) {
+    mix = await mixAudio(project, 48000, 2);
+    aenc = new AudioEncoder({ output: (chunk, meta) => muxer.addAudioChunk(chunk, meta), error: (e) => (encodeError = e) });
+    aenc.configure(audio.cfg);
+  }
+  const L = mix?.getChannelData(0), R = mix?.getChannelData(1);
+  const encodeAudioUntil = (sec) => {
+    if (!aenc) return;
+    const end = Math.min(mix.length, Math.ceil(sec * 48000));
+    const block = 4800;
+    while (audioAt < end) {
+      const n = Math.min(block, mix.length - audioAt);
+      const planar = new Float32Array(n * 2);
+      planar.set(L.subarray(audioAt, audioAt + n), 0);
+      planar.set(R.subarray(audioAt, audioAt + n), n);
+      const data = new AudioData({
+        format: "f32-planar", sampleRate: 48000, numberOfFrames: n, numberOfChannels: 2,
+        timestamp: Math.round((audioAt / 48000) * 1e6), data: planar,
+      });
+      aenc.encode(data);
+      data.close();
+      audioAt += n;
+    }
+  };
   const decoders = new Map(); // item id -> SegmentDecoder | null (null = seek fallback)
   const smooth = opts.smooth && opts.smooth.method !== "off" ? { ...opts.smooth, fps } : null;
   renderLock.exporting = true;
@@ -281,7 +319,10 @@ async function exportOnce(project, onProgress, signal, opts = {}) {
     for (let i = 0; i < frames; i++) {
       if (signal?.aborted) throw new DOMException("Export cancelled", "AbortError");
       if (encodeError) throw encodeError;
+      if (writeError) throw writeError;
       const t = i / fps;
+      encodeAudioUntil(t + 1);
+      if (queued > 96 * 2 ** 20) await writing; // the disk is behind: let it catch up
       await prepareFrame(project, t, decoders, smooth);
       drawFrame(ctx, project, t);
       if (encodeError || venc.state === "closed") throw encodeError || new Error("The video encoder stopped");
@@ -289,7 +330,7 @@ async function exportOnce(project, onProgress, signal, opts = {}) {
       venc.encode(frame, { keyFrame: i % (fps * 2) === 0 });
       frame.close();
       while (venc.encodeQueueSize > 8) await new Promise((r) => venc.addEventListener("dequeue", r, { once: true }));
-      onProgress?.((i + 1) / frames * (audio ? 0.9 : 1));
+      onProgress?.((i + 1) / frames * 0.99);
     }
     await venc.flush();
   } finally {
@@ -299,31 +340,19 @@ async function exportOnce(project, onProgress, signal, opts = {}) {
     interpCanvases.clear();
   }
 
-  if (audio) {
-    const mix = await mixPromise;
-    const aenc = new AudioEncoder({
-      output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
-      error: (e) => (encodeError = e),
-    });
-    aenc.configure(audio.cfg);
-    const block = 4800;
-    const L = mix.getChannelData(0), R = mix.getChannelData(1);
-    for (let off = 0; off < mix.length; off += block) {
-      const n = Math.min(block, mix.length - off);
-      const planar = new Float32Array(n * 2);
-      planar.set(L.subarray(off, off + n), 0);
-      planar.set(R.subarray(off, off + n), n);
-      const data = new AudioData({
-        format: "f32-planar", sampleRate: 48000, numberOfFrames: n, numberOfChannels: 2,
-        timestamp: Math.round((off / 48000) * 1e6), data: planar,
-      });
-      aenc.encode(data);
-      data.close();
-    }
+  if (aenc) {
+    encodeAudioUntil(Infinity);
     await aenc.flush();
     if (encodeError) throw encodeError;
   }
   muxer.finalize();
+  if (sink) {
+    await writing;
+    if (writeError) throw writeError;
+    await sink.close();
+    onProgress?.(1);
+    return null; // the file is on disk
+  }
   onProgress?.(1);
   return new Blob([target.buffer], { type: "video/mp4" });
 }
