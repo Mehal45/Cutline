@@ -15,7 +15,7 @@ import { SourceViewer, toggleSource, stepSource, markSource, addFromSource } fro
 import { hasKeys, setKey, setStatic } from "./keyframes.js";
 import { exportMp4, exportWav, exportFrame, supportedCodecs, VIDEO_CODECS, QUALITY, bitrateFor } from "./export.js";
 import { transcribe, wordsToCaptions, CAPTION_MODELS } from "./captions.js";
-import { html, fmt, Field, Icon, Slider, secs } from "./ui/kit.js";
+import { html, fmt, Field, Icon, Slider, secs, NumInput } from "./ui/kit.js";
 import { startProxies, setProxyMode } from "./proxy.js";
 import { rootProject, createCompound } from "./compound.js";
 import { Inspector } from "./ui/inspector.js";
@@ -803,8 +803,7 @@ function ExportDialog({ onClose }) {
     </div>
     ${quality === "custom" && html`<${Field} label="Video bitrate (kbps)">
       <div class="row">
-        <input type="number" min="500" max="500000" step="500" value=${customKbps} disabled=${busy} style=${{ flex: 1 }}
-          onChange=${(e) => setCustomKbps(Math.max(500, Math.min(500000, +e.target.value || 0)))} />
+        <${NumInput} min=${500} max=${500000} step=${500} value=${customKbps} disabled=${busy} style=${{ flex: 1 }} onCommit=${setCustomKbps} />
         ${[8000, 20000, 40000, 80000].map((k) => html`<button key=${k} class=${customKbps === k ? "chip on" : "chip"} disabled=${busy}
           onClick=${() => setCustomKbps(k)}>${k / 1000}M</button>`)}
       </div>

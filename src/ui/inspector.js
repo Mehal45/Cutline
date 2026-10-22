@@ -12,7 +12,7 @@ import { VOICE_EFFECTS } from "../audiofx.js";
 import { cutoutStatus, loadCutout } from "../segment.js";
 import { uid } from "../store.js";
 import { saveElement } from "../elements.js";
-import { html, Field, Section, KSlider, Slider, CurveEditor, Icon, db, secs } from "./kit.js";
+import { html, Field, Section, KSlider, Slider, CurveEditor, Icon, db, secs, NumInput } from "./kit.js";
 import { FONTS, loadFont, familyCss, canListSystemFonts, loadSystemFonts, rememberFont, fontName } from "./fonts.js";
 import { SpeedCurveEditor } from "./speedcurve.js";
 import { hasCurve } from "../speed.js";
@@ -124,10 +124,8 @@ function PosRow({ kind, id }) {
   };
   return html`<div class="krow pos">
     <span class="klabel">Position</span>
-    <span class="xy"><b>X</b><input type="number" step="1" value=${Math.round((x - 0.5) * W)} onFocus=${(e) => e.target.select()}
-      onChange=${(e) => e.target.value !== "" && setPx("x", +e.target.value, W)} /></span>
-    <span class="xy"><b>Y</b><input type="number" step="1" value=${Math.round((y - 0.5) * H)} onFocus=${(e) => e.target.select()}
-      onChange=${(e) => e.target.value !== "" && setPx("y", +e.target.value, H)} /></span>
+    <span class="xy"><b>X</b><${NumInput} step=${1} value=${Math.round((x - 0.5) * W)} onCommit=${(v) => setPx("x", v, W)} /></span>
+    <span class="xy"><b>Y</b><${NumInput} step=${1} value=${Math.round((y - 0.5) * H)} onCommit=${(v) => setPx("y", v, H)} /></span>
     <span class="kkf"><span class="kn"></span>
       <button class=${"kf" + (here ? " on" : animated ? " has" : "")} title=${here ? "Remove position keyframe" : "Add position keyframe at the playhead"} onClick=${toggle}>◇</button>
       <span class="kn"></span></span>
@@ -520,7 +518,7 @@ function TextFontFields({ st, setSt }) {
       <button class=${st.uppercase ? "chip on" : "chip"} title="All capitals" onClick=${() => setSt("uppercase", !st.uppercase || undefined)}>AA</button>
     </div>
     <div class="grid2">
-      <${Field} label="Size"><input type="number" min="12" max="400" value=${st.size} onChange=${(e) => setSt("size", +e.target.value)} /><//>
+      <${Field} label="Size"><${NumInput} min=${4} max=${1000} step=${1} value=${st.size} onCommit=${(v) => setSt("size", v)} /><//>
       <${Field} label="Weight">
         <select value=${st.weight} onChange=${(e) => setSt("weight", +e.target.value)}>
           ${[300, 400, 500, 600, 700, 800, 900].map((w) => html`<option value=${w}>${w}</option>`)}
@@ -566,7 +564,7 @@ function TextLookFields({ st, setSt }) {
       <${Field} label="Colour"><input type="color" value=${st.color} onChange=${(e) => setSt("color", e.target.value)} /><//>
       <${Field} label="Highlight"><input type="color" value=${st.highlight} onChange=${(e) => setSt("highlight", e.target.value)} /><//>
       <${Field} label="Outline"><input type="color" value=${(st.stroke || "#000000").slice(0, 7)} onChange=${(e) => setSt("stroke", e.target.value + (st.stroke || "").slice(7))} /><//>
-      <${Field} label="Outline width"><input type="number" min="0" max="30" value=${st.strokeWidth} onChange=${(e) => setSt("strokeWidth", +e.target.value)} /><//>
+      <${Field} label="Outline width"><${NumInput} min=${0} max=${60} step=${1} value=${st.strokeWidth} onCommit=${(v) => setSt("strokeWidth", v)} /><//>
     </div>
     ${st.strokeWidth > 0 && html`<${Slider} label="Outline opacity" value=${alphaOf(st.stroke)} min=${0} max=${1} format=${pct}
       onChange=${(v, live) => setSt("stroke", withAlpha(st.stroke || "#000000", v), live)} />`}

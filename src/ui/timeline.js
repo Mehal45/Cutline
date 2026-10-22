@@ -393,9 +393,12 @@ export function Timeline() {
 
   const scrub = (e) => {
     if (getState().playing) pause();
-    seek(timeAt(e.clientX));
+    // The playhead snaps to the start and end of every clip, layer, text, audio item and effect (snapping on).
+    const pts = snapPoints(getState().project, new Set()).slice(1); // not to itself
+    const go = (x) => { const s = snapEdge(Math.max(0, timeAt(x)), pts, zoom); setState({ snapAt: s.at }); seek(s.t); };
+    go(e.clientX);
     // Dragging the playhead to the left / right edge scrolls the timeline along with it.
-    dragGesture(e, (ev) => seek(Math.max(0, timeAt(ev.clientX))), { undoable: false, scroll: scroller.current, axis: "x" });
+    dragGesture(e, (ev) => go(ev.clientX), { undoable: false, scroll: scroller.current, axis: "x", onClick: () => setState({ snapAt: null }) });
   };
 
   // Rubber-band selection on empty track space; a plain click seeks instead.
@@ -877,9 +880,13 @@ export function Timeline() {
                 <div class="handle l" onPointerDown=${(e) => {
                   const orig = structuredClone(s);
                   const free = getState().mainMagnet === false; // magnet off: the end stays put and a gap opens
+                  const pts = snapPoints(getState().project, new Set([s.id]));
                   dragGesture(e, (ev, dx) => {
+                    // The start edge snaps to the edges of other clips, texts, layers, audio, effects and the playhead.
+                    const sn = snapEdge(s.start + dx / zoom, pts, zoom);
+                    setState({ snapAt: sn.at });
                     // Timeline seconds trimmed × speed = source seconds trimmed.
-                    const cut = Math.max(-s.in / sp, free ? -(s.gap || 0) : -Infinity, Math.min(s.dur - 0.2, dx / zoom));
+                    const cut = Math.max(-s.in / sp, free ? -(s.gap || 0) : -Infinity, Math.min(s.dur - 0.2, sn.t - s.start));
                     editLive((p) => {
                       const x = p.main.find((y) => y.id === s.id);
                       x.in = s.in + cut * sp; x.dur = s.dur - cut;
@@ -899,8 +906,12 @@ export function Timeline() {
                   // Magnet off: the next clip stays where it is (its gap grows or shrinks instead).
                   const next = getState().mainMagnet === false ? project.main[i + 1] : null;
                   const room = next ? next.gap || 0 : Infinity;
+                  const pts = snapPoints(getState().project, new Set([s.id]));
                   dragGesture(e, (ev, dx) => editLive((p) => {
-                    const dur = Math.max(0.2, Math.min((maxSrc - s.in) / sp, s.dur + room, s.dur + dx / zoom));
+                    // The end edge snaps to the edges of everything else on the timeline.
+                    const sn = snapEdge(s.start + s.dur + dx / zoom, pts, zoom);
+                    setState({ snapAt: sn.at });
+                    const dur = Math.max(0.2, Math.min((maxSrc - s.in) / sp, s.dur + room, sn.t - s.start));
                     p.main.find((y) => y.id === s.id).dur = dur;
                     const n = next && p.main.find((y) => y.id === next.id);
                     if (n) { const g = (next.gap || 0) + s.dur - dur; if (g > 1e-4) n.gap = g; else delete n.gap; }

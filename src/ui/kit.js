@@ -103,9 +103,38 @@ export function KSlider({ kind, id, path, label, min, max, step = 0.01, fallback
  */
 export function NumBox({ value, min, max, format, onCommit }) {
   const mode = numberMode(format);
-  return html`<span class="knum"><input type="number" step=${mode.step} value=${mode.show(value)}
+  const lo = mode.unit === "dB" ? -60 : mode.show(min), hi = mode.show(max);
+  return html`<span class="knum"><${NumInput} step=${mode.step} min=${lo} max=${hi} value=${mode.show(value)}
+    onCommit=${(n) => onCommit(Math.max(min, Math.min(max, mode.read(n))))} />${mode.unit && html`<em>${mode.unit}</em>`}</span>`;
+}
+
+/**
+ * A number box you can type into freely: clear it, type 35000, and nothing jumps back while you type.
+ * Values are used as you type once they are in range; Enter or clicking away applies the rest (clamped to
+ * min..max); Escape or an empty box goes back to the current value.
+ */
+export function NumInput({ value, min = -Infinity, max = Infinity, step, onCommit, ...rest }) {
+  const [draft, setDraft] = useState(null);
+  const ok = (n) => n !== "" && !isNaN(+n);
+  const finish = (e) => {
+    if (draft !== null && ok(draft)) onCommit(Math.max(min, Math.min(max, +draft)));
+    setDraft(null);
+    e?.target?.blur?.();
+  };
+  return html`<input type="number" step=${step} min=${isFinite(min) ? min : undefined} max=${isFinite(max) ? max : undefined} ...${rest}
+    value=${draft ?? value}
     onFocus=${(e) => e.target.select()}
-    onChange=${(e) => { if (e.target.value === "" || isNaN(+e.target.value)) return; onCommit(Math.max(min, Math.min(max, mode.read(+e.target.value)))); }} />${mode.unit && html`<em>${mode.unit}</em>`}</span>`;
+    onChange=${(e) => {
+      const v = e.target.value;
+      setDraft(v);
+      if (ok(v) && +v >= min && +v <= max) onCommit(+v);
+    }}
+    onBlur=${() => { if (draft !== null && ok(draft)) onCommit(Math.max(min, Math.min(max, +draft))); setDraft(null); }}
+    onKeyDown=${(e) => {
+      if (e.key === "Enter") finish(e);
+      else if (e.key === "Escape") { setDraft(null); e.target.blur(); }
+      e.stopPropagation();
+    }} />`;
 }
 
 /** A plain slider for a non-animated numeric setting, with an editable number. One undo step per drag. */
