@@ -32,7 +32,7 @@ const LANE_KEY = { effect: "effects", overlay: "overlays", audio: "audio" };
  * With `scroll` (the timeline's scroll box), holding the pointer near or past an edge keeps scrolling that
  * way, and dx/dy include the distance scrolled, so whatever is being dragged stays under the pointer.
  */
-export function dragGesture(e, onMove, { onClick, undoable = true, onEnd, scroll, tip } = {}) {
+export function dragGesture(e, onMove, { onClick, undoable = true, onEnd, scroll, tip, axis } = {}) {
   e.stopPropagation();
   e.preventDefault();
   const x0 = e.clientX, y0 = e.clientY;
@@ -50,8 +50,10 @@ export function dragGesture(e, onMove, { onClick, undoable = true, onEnd, scroll
     let vx = 0, vy = 0;
     if (last.clientX < r.left + LABEL + edge) vx = -speed(r.left + LABEL + edge - last.clientX);
     else if (last.clientX > r.right - edge) vx = speed(last.clientX - (r.right - edge));
-    if (last.clientY < r.top + 30) vy = -speed((r.top + 30 - last.clientY) * 1.5);
-    else if (last.clientY > r.bottom - 24) vy = speed((last.clientY - (r.bottom - 24)) * 1.5);
+    if (axis !== "x") {
+      if (last.clientY < r.top + 30) vy = -speed((r.top + 30 - last.clientY) * 1.5);
+      else if (last.clientY > r.bottom - 24) vy = speed((last.clientY - (r.bottom - 24)) * 1.5);
+    }
     if (!vx && !vy) return;
     const bl = scroll.scrollLeft, bt = scroll.scrollTop;
     scroll.scrollLeft += vx;
@@ -293,6 +295,17 @@ export function Timeline() {
     ro.observe(scroller.current);
     return () => ro.disconnect();
   }, []);
+  // While playing, the timeline follows the playhead: it comes into view when you press play, and once it
+  // reaches the middle of the visible area the timeline scrolls along so the playhead stays there.
+  const playing = useStore((s) => s.playing);
+  useEffect(() => {
+    const el = scroller.current;
+    if (!playing || !el) return;
+    const x = LABEL + time * zoom, view = el.clientWidth - LABEL;
+    const rel = x - el.scrollLeft - LABEL; // playhead position inside the visible track area
+    if (rel < 0 || rel > view) el.scrollLeft = Math.max(0, x - LABEL - view / 3);
+    else if (rel > view / 2) el.scrollLeft = x - LABEL - view / 2;
+  }, [playing, time, zoom]);
   const segs = layoutMain(project);
   // While the start of a main clip is being trimmed, it and the clips after it are drawn shifted by the
   // trimmed amount, so the edge stays under the mouse (the ripple happens on release).
@@ -382,7 +395,7 @@ export function Timeline() {
     if (getState().playing) pause();
     seek(timeAt(e.clientX));
     // Dragging the playhead to the left / right edge scrolls the timeline along with it.
-    dragGesture(e, (ev) => seek(Math.max(0, timeAt(ev.clientX))), { undoable: false, scroll: scroller.current });
+    dragGesture(e, (ev) => seek(Math.max(0, timeAt(ev.clientX))), { undoable: false, scroll: scroller.current, axis: "x" });
   };
 
   // Rubber-band selection on empty track space; a plain click seeks instead.

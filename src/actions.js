@@ -294,38 +294,46 @@ function splitTimed(p, lane, ids, time) {
   }
 }
 
+/**
+ * Why the main clip `seg` can't be cut at `time`, or null: each piece must still be longer than the
+ * transition that overlaps it (otherwise the transition would run past the piece).
+ */
+function mainSplitProblem(project, seg, time) {
+  const segs = layoutMain(project);
+  const i = segs.findIndex((s) => s.id === seg.id);
+  const prev = i > 0 && !seg.gap && segs[i - 1].transition ? segs[i - 1].transition.dur / 2 : 0;
+  const next = seg.transition && segs[i + 1] && !segs[i + 1].gap ? seg.transition.dur / 2 : 0;
+  const local = time - seg.start;
+  if ((prev && local < prev + 0.1) || (next && seg.dur - local < next + 0.1)) {
+    return "Too close to the transition to cut here: move the playhead further from it (or remove the transition first)";
+  }
+  return null;
+}
+
+/**
+ * S / split button: cuts what is selected at the playhead: only the selected texts, layers, audio, effects
+ * and main clips. With nothing selected it cuts the main clip under the playhead.
+ */
 export function splitAtPlayhead() {
   const { project, time, selection } = getState();
-  const selectedTexts = selection.filter((s) => s.kind === "text").map((s) => s.id);
-  const textsToSplit = project.texts.filter((t) => selectedTexts.includes(t.id) && time > t.start + 0.05 && time < t.start + t.dur - 0.05);
-
-  if (textsToSplit.length) {
-    edit((p) => {
-      for (const t of textsToSplit) {
-        const i = p.texts.findIndex((x) => x.id === t.id);
-        const a = p.texts[i];
-        const b = structuredClone(a);
-        b.id = uid();
-        b.start = time;
-        b.dur = a.start + a.dur - time;
-        a.dur = time - a.start;
-        if (a.words) { a.words = a.words.filter((w) => w.t0 < time); b.words = b.words.filter((w) => w.t0 >= time); }
-        if (b.sound) delete b.sound;
-        if (a.keyframes) [a.keyframes, b.keyframes] = splitKeyframes(a, time - t.start);
-        p.texts.splice(i + 1, 0, b);
-      }
-    });
+  const inside = (x) => time > x.start + 0.05 && time < x.start + x.dur - 0.05;
+  const timed = selection.filter((s) => ["text", "overlay", "audio", "effect"].includes(s.kind));
+  const mainSel = selection.filter((s) => s.kind === "main").map((s) => s.id);
+  const nothing = !timed.length && !mainSel.length;
+  const lanes = ["text", "overlay", "audio", "effect"]
+    .map((k) => [k === "text" ? "texts" : LANES[k], project[k === "text" ? "texts" : LANES[k]].filter((x) => timed.some((s) => s.kind === k && s.id === x.id) && inside(x)).map((x) => x.id)])
+    .filter(([, ids]) => ids.length);
+  let seg = (nothing || mainSel.length) ? layoutMain(project).find((s) => time > s.start + 0.05 && time < s.start + s.dur - 0.05 && (nothing || mainSel.includes(s.id))) : null;
+  const problem = seg && mainSplitProblem(project, seg, time);
+  if (problem) { seg = null; toast(problem, 4000); }
+  if (!seg && !lanes.length) {
+    if (!problem) toast(nothing ? "Move the playhead over a clip to split it" : "Move the playhead over the selected item to split it");
     return;
   }
-
-  // Selected layers, audio or timeline effects under the playhead.
-  const lanes = ["overlay", "audio", "effect"].map((k) => [LANES[k], [...selIds(k)]]).filter(([, ids]) => ids.length);
-  const hits = lanes.some(([lane, ids]) => project[lane].some((x) => ids.includes(x.id) && time > x.start + 0.05 && time < x.start + x.dur - 0.05));
-  if (hits) return edit((p) => lanes.forEach(([lane, ids]) => splitTimed(p, lane, ids, time)));
-
-  const seg = layoutMain(project).find((s) => time > s.start + 0.05 && time < s.start + s.dur - 0.05);
-  if (!seg) return toast("Move the playhead over a clip to split it");
-  edit((p) => splitMain(p, seg, time));
+  edit((p) => {
+    if (seg) splitMain(p, seg, time);
+    for (const [lane, ids] of lanes) splitTimed(p, lane, ids, time);
+  });
 }
 
 /** Splits the main-track clip `seg` (with its computed start) at timeline time `time` (mutates). */
@@ -353,8 +361,10 @@ export function splitAllAtPlayhead() {
   const seg = layoutMain(project).find(inside);
   const lanes = ["texts", "overlays", "audio", "effects"].map((lane) => [lane, project[lane].filter(inside).map((x) => x.id)]).filter(([, ids]) => ids.length);
   if (!seg && !lanes.length) return toast("Nothing under the playhead to split");
+  const problem = seg && mainSplitProblem(project, seg, time);
+  if (problem) toast(problem, 4000);
   edit((p) => {
-    if (seg) splitMain(p, seg, time);
+    if (seg && !problem) splitMain(p, seg, time);
     for (const [lane, ids] of lanes) splitTimed(p, lane, ids, time);
   });
 }
@@ -364,7 +374,11 @@ export function splitItemAt(kind, id, time) {
   const { project } = getState();
   if (kind === "main") {
     const seg = layoutMain(project).find((s) => s.id === id);
-    if (seg && time > seg.start + 0.05 && time < seg.start + seg.dur - 0.05) edit((p) => splitMain(p, seg, time));
+    if (seg && time > seg.start + 0.05 && time < seg.start + seg.dur - 0.05) {
+      const problem = mainSplitProblem(project, seg, time);
+      if (problem) return toast(problem, 4000);
+      edit((p) => splitMain(p, seg, time));
+    }
     return;
   }
   const lane = LANES[kind];

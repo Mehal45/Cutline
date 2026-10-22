@@ -192,24 +192,37 @@ export function activeClips(project, t) {
     const seg = segs[i];
     const end = seg.start + seg.dur;
     // A transition straddles the cut between seg and the next one: [cut - d/2, cut + d/2].
-    // No transition across empty space (main track magnet off).
-    const tr = seg.transition && segs[i + 1] && !segs[i + 1].gap ? seg.transition : null;
-    const half = tr ? tr.dur / 2 : 0;
-    const prevTr = i > 0 && segs[i - 1].transition && !seg.gap ? segs[i - 1].transition.dur / 2 : 0;
+    // No transition across empty space (main track magnet off); never longer than either clip.
+    const half = trHalf(segs, i);
+    const prevTr = i > 0 ? trHalf(segs, i - 1) : 0;
     if (t >= seg.start - prevTr && t < end + half) {
       const local = Math.max(0, Math.min(seg.dur - 1e-3, t - seg.start));
       out.push({ seg, index: i, local, sourceTime: sourceAt(seg, local) });
     }
   }
-  // Transition progress if two clips overlap in this window.
+  // Transition progress if two neighbouring clips overlap in this window. Anything else (very short clips
+  // next to transitions) falls back to the one clip under the playhead, so drawing never breaks.
   let transition = null;
-  if (out.length === 2) {
-    const [a, b] = out;
-    const cut = b.seg.start;
-    const d = a.seg.transition.dur;
-    transition = { type: a.seg.transition.type, p: clamp01((t - (cut - d / 2)) / d), a, b };
+  if (out.length >= 2) {
+    const pair = out.findIndex((a, k) => out[k + 1] && out[k + 1].index === a.index + 1 && trHalf(segs, a.index) > 0
+      && t >= out[k + 1].seg.start - trHalf(segs, a.index) && t < out[k + 1].seg.start + trHalf(segs, a.index));
+    if (pair >= 0) {
+      const a = out[pair], b = out[pair + 1];
+      const d = 2 * trHalf(segs, a.index);
+      transition = { type: a.seg.transition.type, p: clamp01((t - (b.seg.start - d / 2)) / d), a, b };
+      return { clips: [a, b], transition };
+    }
+    const here = out.find((c) => t >= c.seg.start && t < c.seg.start + c.seg.dur) || out[0];
+    return { clips: [here], transition: null };
   }
   return { clips: out, transition };
+}
+
+/** Half the length of the transition after main clip i (0 if none), capped so it fits both clips. */
+function trHalf(segs, i) {
+  const seg = segs[i], next = segs[i + 1];
+  if (!seg?.transition || !next || next.gap) return 0;
+  return Math.max(0, Math.min(seg.transition.dur, seg.dur, next.dur)) / 2;
 }
 
 // ---------- drawing ----------
