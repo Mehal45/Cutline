@@ -93,19 +93,35 @@ function previewSrc(item, media) {
 export function elementFor(seg, media) {
   let el = elements.get(seg.id);
   const src = previewSrc(seg, media);
-  if (el && el.dataset.src === src) return el;
+  if (el && el.dataset.src === src) { swaps.delete(seg.id); return el; }
   if (el instanceof HTMLMediaElement) {
-    // Switching between the original and its proxy: carry on from the same moment.
-    const at = el.currentTime;
-    el.pause();
-    el.removeAttribute("src");
-    el.load();
-    el = null;
-    elements.delete(seg.id);
-    const next = elementFor(seg, media);
-    if (next instanceof HTMLMediaElement) next.addEventListener("loadedmetadata", () => { if (next.currentTime < 0.01) next.currentTime = at; }, { once: true });
+    // Switching between the original and its proxy (a proxy finished building, or play needs the sound):
+    // the new file loads in the background while the old one stays on screen, so the clip never goes black.
+    let next = swaps.get(seg.id);
+    if (!next || next.dataset.src !== src) {
+      if (next) dispose(next);
+      next = makeElement(media, src);
+      const at = el.currentTime;
+      next.addEventListener("loadedmetadata", () => { if (next.currentTime < 0.01) next.currentTime = at; }, { once: true });
+      swaps.set(seg.id, next);
+    }
+    const ready = next.readyState >= 2 && !next.seeking;
+    if (!ready && !renderLock.exporting && el.readyState >= 2) return el;
+    swaps.delete(seg.id);
+    if (!ready) next.currentTime = el.currentTime;
+    dispose(el);
+    elements.set(seg.id, next);
     return next;
   }
+  el = makeElement(media, src);
+  elements.set(seg.id, el);
+  return el;
+}
+
+const swaps = new Map(); // segId -> element loading the new source (shown once it has a frame)
+
+function makeElement(media, src) {
+  let el;
   if (media.kind === "image") {
     el = new Image();
     el.src = media.url;
@@ -121,8 +137,14 @@ export function elementFor(seg, media) {
     el.crossOrigin = "anonymous";
   }
   el.dataset.src = el instanceof HTMLVideoElement ? src : media.url;
-  elements.set(seg.id, el);
   return el;
+}
+
+function dispose(el) {
+  if (!(el instanceof HTMLMediaElement)) return;
+  el.pause();
+  el.removeAttribute("src");
+  el.load();
 }
 
 export function allVideoElements() {
@@ -284,6 +306,7 @@ function drawVisual(ctx, project, item, lt, W, H) {
   const el = media.kind === "compound" ? renderCompound(project, item, media, sourceAt(item, lt), W, H)
     : exportFrames.get(item.id) || elementFor(item, media);
   if (!el) return;
+  if (el instanceof HTMLVideoElement && el.readyState < 2) frameStatus.loading = true; // still opening the file
   const [sw, sh] = sizeOf(el, media);
   if (!sw || !sh) return;
   const a = animState(item.anim, lt, item.dur);
@@ -698,7 +721,11 @@ function roundRect(ctx, x, y, w, h, r) {
 }
 
 /** Draws the full composition at time t into a 2D context sized project.width x height. */
+/** Whether the last preview frame had a clip whose video wasn't ready yet (the player shows "Loading…"). */
+export const frameStatus = { loading: false };
+
 export function drawFrame(ctx, project, t, opts = {}) {
+  if (!opts.nested) frameStatus.loading = false;
   const W = ctx.canvas.width, H = ctx.canvas.height;
   ctx.clearRect(0, 0, W, H);
   // Inside a compound clip with nothing on its main track, empty areas stay see-through.

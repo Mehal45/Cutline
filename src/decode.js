@@ -76,12 +76,16 @@ export function startScans(getState, setState) {
   if (!desk()?.scan) return;
   const started = new Set();
   desk().onScanProgress?.(({ path, progress }) => setState({ scans: { ...getState().scans, [path]: progress } }));
-  setInterval(() => {
-    for (const m of Object.values(getState().project.media)) {
-      if (m.kind !== "video" || !m.path || m.missing || !isMatroska(m) || started.has(m.path)) continue;
-      started.add(m.path);
-      desk().scan(m.path).catch((e) => console.warn("scan", m.name, e));
-    }
+  // One file at a time, and never while the preview plays: indexing reads the whole file, and doing many
+  // at once used to starve the preview of disk speed (clips stayed black for a while after opening a project).
+  let busy = false;
+  setInterval(async () => {
+    if (busy || getState().playing) return;
+    const m = Object.values(getState().project.media).find((x) => x.kind === "video" && x.path && !x.missing && isMatroska(x) && !started.has(x.path));
+    if (!m) return;
+    started.add(m.path);
+    busy = true;
+    try { await desk().scan(m.path); } catch (e) { console.warn("scan", m.name, e); } finally { busy = false; }
   }, 2000);
 }
 

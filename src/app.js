@@ -4,7 +4,7 @@ import {
   useStore, getState, setState, edit, editLive, undo, redo, projectDuration, isSelected, select, findItem,
 } from "./store.js";
 import {
-  drawFrame, syncMedia, framesReady, renderLock, activeClips, activeOverlays, itemBounds, hitTest, transformAt, TRANSITIONS,
+  drawFrame, frameStatus, syncMedia, framesReady, renderLock, activeClips, activeOverlays, itemBounds, hitTest, transformAt, TRANSITIONS,
 } from "./engine.js";
 import {
   clock, play, pause, togglePlay, seek, toast, importFiles, addMediaToTimeline, splitAtPlayhead, deleteSelection,
@@ -88,6 +88,7 @@ function startRenderLoop(canvas) {
     }
     held = 0;
     drawFrame(ctx, s.project, t);
+    if (frameStatus.loading !== !!s.clipLoading) setState({ clipLoading: frameStatus.loading });
   };
   raf = requestAnimationFrame(tick);
   return () => cancelAnimationFrame(raf);
@@ -366,6 +367,7 @@ function Player() {
     <div class="phead"><span>Player</span><span class="muted">${width}×${height} · ${useStore((s) => s.project.fps)} fps</span></div>
     <div class="stage" ref=${stage}>
       <canvas ref=${canvas} width=${previewW} height=${previewH} />
+      ${useStore((s) => s.clipLoading) && html`<div class="clip-loading"><span class="spin" /> Loading video…</div>`}
       ${rect && html`<${TransformOverlay} rect=${rect} />`}
       ${duration <= 0 && html`<div class="stage-hint">
         <b>The timeline is empty</b>
