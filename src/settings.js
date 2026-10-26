@@ -21,6 +21,7 @@ export const DEFAULTS = {
   imageDur: 5,
   textDur: 3,
   gpu: true, // graphics acceleration for the whole app (restart needed)
+  autoUpdate: true, // look for a new version when the app opens
 };
 
 export const settings = () => ({ ...DEFAULTS, ...(getState().settings || {}) });

@@ -6,6 +6,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { Readable } = require("node:stream");
+const { setupUpdates } = require("./updater.cjs");
+
+setupUpdates({ repo: "Mehal45/Cutline", assets: { win32: /^Cutline-Setup-.*\.exe$/i, darwin: /\.dmg$/i } });
 
 const root = path.join(__dirname, "..");
 const token = crypto.randomBytes(16).toString("hex"); // guards /local-file against other pages on this PC

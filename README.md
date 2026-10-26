@@ -66,6 +66,7 @@ To uninstall, go to **Settings → Apps → Installed apps → Cutline → Unins
 
 - **Internet:** Cutline needs a connection to start, because a few editor libraries load online. The caption model downloads once, the first time you use Auto captions.
 - **Your videos never leave your computer.** Editing, captions and export all run locally.
+- **Updates:** Cutline checks for a new version when it opens and shows a bar when one is out. On Windows, click **Update now**, then **Restart & update**: it saves your project, installs the new version and opens again. On a Mac the button downloads the new `.dmg`. Check by hand or turn the automatic check off in **Menu › Settings › Updates**. (Versions before 1.23 can't update themselves: install 1.23 once from the release page.)
 
 ### Run from source (developers)
 
@@ -159,6 +160,7 @@ Press **?** in the app for the full list. On a Mac, use ⌘ where it says Ctrl.
 | `src/actions.js` | Editing commands: split, delete, clipboard, speed, transitions, playback clock |
 | `src/app.js` | UI (React + htm): panels, preview transform overlay, timeline, shortcuts |
 | `desktop/main.cjs`, `desktop/preload.cjs` | Desktop app (Electron): serves the editor and local media files, file dialogs, autosave |
+| `desktop/updater.cjs`, `src/ui/updates.js` | In-app updates from GitHub Releases |
 | `server.mjs` | Run in a normal browser instead (`npm run web`) |
 | `.github/workflows/release.yml` | Builds the Windows and Mac installers on each version tag |
 

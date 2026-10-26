@@ -4,10 +4,11 @@ import { useStore, setState, getState } from "../store.js";
 import { settings, setSetting, DEFAULTS } from "../settings.js";
 import { setToggle } from "./timeline.js";
 import { html, Icon } from "./kit.js";
+import { UpdatesSection } from "./updates.js";
 
 const desktop = typeof window !== "undefined" ? window.cutlineDesktop : null;
 const SECTIONS = [["projects", "Projects & saving", "folder"], ["export", "Export", "upload"], ["preview", "Preview & playback", "monitor-play"],
-  ["timeline", "Timeline", "gallery-horizontal-end"], ["performance", "Performance", "cpu"]];
+  ["timeline", "Timeline", "gallery-horizontal-end"], ["performance", "Performance", "cpu"], ["updates", "Updates", "download"]];
 
 function Row({ label, hint, children }) {
   return html`<div class="set-row"><div class="set-label"><b>${label}</b>${hint && html`<span class="muted">${hint}</span>`}</div><div class="set-ctl">${children}</div></div>`;
@@ -87,6 +88,7 @@ export function SettingsDialog({ onClose }) {
             <${Row} label="Graphics acceleration" hint="Uses the graphics card to draw the app and decode video. Turn off only if the window flickers or crashes. Takes effect after restarting Cutline.">
               <${Check} k="gpu" label="Use hardware (GPU) acceleration" /><//>
             ${settings().gpu !== gpuStart && html`<p class="warn">Restart Cutline to apply this.</p>`}`}
+          ${sec === "updates" && html`<${UpdatesSection} Row=${Row} />`}
           <div class="set-foot">
             <button onClick=${() => { for (const k of Object.keys(DEFAULTS)) if (k !== "projectsDir" && k !== "exportDir") setSetting(k, DEFAULTS[k]); }}>Reset to defaults</button>
             <button class="primary" onClick=${onClose}>Done</button>

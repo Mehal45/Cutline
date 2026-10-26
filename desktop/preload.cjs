@@ -46,4 +46,12 @@ contextBridge.exposeInMainWorld("cutlineDesktop", {
   proxyDone: (part, final, audio) => ipcRenderer.invoke("cutline:proxy-done", part, final, audio),
   proxyAbort: (part) => ipcRenderer.invoke("cutline:proxy-abort", part),
   proxyClear: () => ipcRenderer.invoke("cutline:proxy-clear"),
+  /** In-app updates from GitHub Releases (see desktop/updater.cjs). */
+  updates: {
+    check: () => ipcRenderer.invoke("updates:check"),
+    download: () => ipcRenderer.invoke("updates:download"),
+    install: () => ipcRenderer.invoke("updates:install"),
+    openPage: () => ipcRenderer.invoke("updates:open-page"),
+    onProgress: (cb) => ipcRenderer.on("updates:progress", (_e, p) => cb(p)),
+  },
 });

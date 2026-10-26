@@ -43,6 +43,23 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      # The release notes are the version's commit message (what changed), then the download table.
+      # The app's "What's new" shows the part above "## Download".
+      - run: |
+          git log -1 --format=%B | grep -v '^Co-Authored-By' > notes.md
+          cat >> notes.md <<'EOF'
+
+          ## Download
+
+          | Your computer | File |
+          |---|---|
+          | **Windows 10 / 11** | `Cutline-Setup-….exe` |
+          | **Mac** (Apple silicon and Intel) | `Cutline-…-mac.dmg` |
+
+          Already have Cutline? It updates itself: Menu › Settings › Updates (Windows).
+          Installation steps are in the [README](https://github.com/Mehal45/Cutline#install).
+          EOF
       - uses: actions/download-artifact@v4
         with:
           path: installers
@@ -50,12 +67,4 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: installers/*
-          body: |
-            ## Download
-
-            | Your computer | File |
-            |---|---|
-            | **Windows 10 / 11** | `Cutline-Setup-�.exe` |
-            | **Mac** (Apple silicon and Intel) | `Cutline-…-mac.dmg` |
-
-            Installation steps are in the [README](https://github.com/${{ github.repository }}#install).
+          body_path: notes.md

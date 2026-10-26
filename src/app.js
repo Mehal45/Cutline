@@ -24,6 +24,7 @@ import { Timeline, dragGesture, setToggle } from "./ui/timeline.js";
 import { MaskHandles, CropBox } from "./ui/mask.js";
 import { ShapesTab } from "./ui/shapes.js";
 import { SettingsDialog } from "./ui/settings.js";
+import { UpdateBar, startUpdateChecks } from "./ui/updates.js";
 import { cacheGet, cacheSet, mediaKey } from "./cache.js";
 import { loadSettings, settings as appSettings, setSetting, lastDur, rememberDur } from "./settings.js";
 import {
@@ -43,6 +44,7 @@ setState({ snap: true, ...(() => { try { return JSON.parse(localStorage.getItem(
 
 startProxies();
 loadSettings();
+startUpdateChecks();
 import("./decode.js").then((d) => d.startScans(getState, setState));
 
 /** Smooth-preview toggle with the background progress. */
@@ -1070,6 +1072,7 @@ function App() {
       <${Inspector} />
     </main>
     <${Timeline} />`}
+    <${UpdateBar} />
     <${Toast} />
     <input id="import-any" type="file" multiple accept="video/*,image/*,audio/*" hidden
       onChange=${(e) => { importFiles([...e.target.files]); e.target.value = ""; }} />
