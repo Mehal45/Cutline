@@ -1,7 +1,7 @@
 // Small shared UI pieces: html tag, fields, sections, keyframable sliders and the curve editor.
 import React, { useState } from "react";
 import htm from "htm";
-import { useStore, getState, checkpoint, edit, editLive, findItem, layoutMain } from "../store.js";
+import { useStore, usePanelTime, getState, checkpoint, edit, editLive, findItem, layoutMain } from "../store.js";
 import { keyAt, keysOf, hasKeys, propAt, EASINGS, easeCurve } from "../keyframes.js";
 import { setAnimatable, toggleKeyframe, clearKeyframes, seek, localTime } from "../actions.js";
 
@@ -69,7 +69,7 @@ const fromRange = (format, x) => (isDb(format) ? (x <= -60 ? 0 : Math.pow(10, x 
  */
 export function KSlider({ kind, id, path, label, min, max, step = 0.01, fallback = 0, format = (v) => v.toFixed(2) }) {
   const project = useStore((s) => s.project);
-  const time = useStore((s) => s.time);
+  const time = usePanelTime();
   const item = findItem(project, kind, id);
   if (!item) return null;
   const lt = localTime(project, kind, item, time);
@@ -153,7 +153,7 @@ export function Slider({ label, value, min, max, step = 0.01, onChange, format =
  */
 export function CurveEditor({ kind, id }) {
   const project = useStore((s) => s.project);
-  const time = useStore((s) => s.time);
+  const time = usePanelTime();
   const item = findItem(project, kind, id);
   const [prop, setProp] = useState(null);
   if (!item?.keyframes) return null;

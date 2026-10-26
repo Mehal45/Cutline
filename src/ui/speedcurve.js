@@ -1,6 +1,6 @@
 // Speed curve editor (speed ramping): presets plus a graph of speed across the clip with draggable points.
 import React from "react";
-import { useStore, edit, editLive, checkpoint, findItem } from "../store.js";
+import { useStore, usePanelTime, edit, editLive, checkpoint, findItem } from "../store.js";
 import { SPEED_CURVES, presetCurve, hasCurve, setSpeedCurve, curveSpeedAt, sourceSpan, MIN_SPEED, MAX_SPEED } from "../speed.js";
 import { localTime } from "../actions.js";
 import { html } from "./kit.js";
@@ -15,7 +15,7 @@ const fmtV = (v) => (v >= 10 ? v.toFixed(0) : v >= 1 ? v.toFixed(1) : v.toFixed(
 
 export function SpeedCurveEditor({ kind, id }) {
   const project = useStore((s) => s.project);
-  const time = useStore((s) => s.time);
+  const time = usePanelTime();
   const item = findItem(project, kind, id);
   if (!item) return null;
   const curve = hasCurve(item) ? item.speedCurve : null;

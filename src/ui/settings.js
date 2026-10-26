@@ -60,7 +60,7 @@ export function SettingsDialog({ onClose }) {
             <${Row} label="Default resolution"><${Select} k="exportRes" num options=${[["project", "Same as the project"], [2160, "4K (2160p)"], [1440, "1440p"], [1080, "1080p"], [720, "720p"], [480, "480p"]]} /><//>
             <${Row} label="Default frame rate"><${Select} k="exportFps" num options=${[["project", "Same as the project"], [24, "24 fps"], [25, "25 fps"], [30, "30 fps"], [50, "50 fps"], [60, "60 fps"]]} /><//>
             <${Row} label="Default format"><${Select} k="exportCodec" options=${[["avc", "H.264 (plays everywhere)"], ["hevc", "H.265 / HEVC (smaller)"], ["av1", "AV1 (smallest, slower)"], ["vp9", "VP9"]]} /><//>
-            <${Row} label="Default quality"><${Select} k="exportQuality" options=${[["high", "High"], ["standard", "Standard"], ["small", "Small file"]]} /><//>
+            <${Row} label="Default quality"><${Select} k="exportQuality" options=${[["max", "Maximum"], ["high", "High"], ["standard", "Standard"], ["small", "Small file"], ["custom", "Custom bitrate"]]} /><//>
             <${Row} label="Encoder" hint="Hardware uses your graphics card (fast). Software uses the processor (slower, works everywhere). Auto tries hardware and falls back to software if it fails.">
               <${Select} k="encoder" options=${[["auto", "Auto (recommended)"], ["hardware", "Hardware (GPU)"], ["software", "Software (CPU)"]]} /><//>
             <${Row} label="Save exported videos in" hint="Where Save MP4 / PNG / WAV put the file.">

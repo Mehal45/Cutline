@@ -1,10 +1,11 @@
 // Cutline desktop app (Electron). Serves the editor from inside the app on 127.0.0.1 and shows it in
 // a window, so it runs on Electron's built-in Chromium (WebCodecs + WebGL2) without Node.js or Chrome.
-const { app, BrowserWindow, shell, ipcMain, dialog, Menu } = require("electron");
+const { app, BrowserWindow, shell, ipcMain, dialog, Menu, protocol } = require("electron");
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const { Readable } = require("node:stream");
 
 const root = path.join(__dirname, "..");
 const token = crypto.randomBytes(16).toString("hex"); // guards /local-file against other pages on this PC
@@ -31,12 +32,46 @@ function sendFile(req, res, file) {
     const start = range[1] ? +range[1] : stat.size - +range[2];
     const end = range[1] && range[2] ? Math.min(+range[2], stat.size - 1) : stat.size - 1;
     if (start >= stat.size || start > end) { res.writeHead(416, { "Content-Range": `bytes */${stat.size}` }).end(); return; }
-    res.writeHead(206, { "Content-Type": type, "Content-Length": end - start + 1, "Content-Range": `bytes ${start}-${end}/${stat.size}`, "Accept-Ranges": "bytes" });
+    res.writeHead(206, { "Content-Type": type, "Content-Length": end - start + 1, "Content-Range": `bytes ${start}-${end}/${stat.size}`, "Accept-Ranges": "bytes", "Cache-Control": "no-store" });
     fs.createReadStream(file, { start, end }).pipe(res);
   } else {
     res.writeHead(200, { "Content-Type": type, "Content-Length": stat.size, "Accept-Ranges": "bytes", "Cache-Control": "no-store" });
     fs.createReadStream(file).pipe(res);
   }
+}
+
+/**
+ * Local media for the editor: cutline-file://media/?t=<token>&p=<path>. Served by the app itself rather than
+ * the 127.0.0.1 server, because the browser only keeps 6 connections open to one server: with more videos
+ * than that open (one long recording cut into many clips), the next one waited — sometimes a minute — for a
+ * free connection before it could show anything. This has no such limit.
+ */
+protocol.registerSchemesAsPrivileged([{
+  scheme: "cutline-file",
+  privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true, bypassCSP: true },
+}]);
+async function serveMedia(req) {
+  const url = new URL(req.url);
+  const p = url.searchParams.get("p");
+  const stat = url.searchParams.get("t") === token && p && path.isAbsolute(p) ? await fs.promises.stat(p).catch(() => null) : null;
+  if (!stat || stat.isDirectory()) return new Response(null, { status: 404 });
+  const headers = {
+    "Content-Type": types[path.extname(p).toLowerCase()] || "application/octet-stream",
+    "Accept-Ranges": "bytes", "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store",
+  };
+  let start = 0, end = stat.size - 1, status = 200;
+  const range = /bytes=(\d*)-(\d*)/.exec(req.headers.get("range") || "");
+  if (range) {
+    start = range[1] ? +range[1] : Math.max(0, stat.size - +range[2]);
+    if (range[1] && range[2]) end = Math.min(+range[2], stat.size - 1);
+    if (start >= stat.size || start > end) return new Response(null, { status: 416, headers: { ...headers, "Content-Range": `bytes */${stat.size}` } });
+    status = 206;
+    headers["Content-Range"] = `bytes ${start}-${end}/${stat.size}`;
+  }
+  headers["Content-Length"] = String(Math.max(0, end - start + 1));
+  if (req.method === "HEAD" || stat.size === 0) return new Response(null, { status, headers });
+  const body = Readable.toWeb(fs.createReadStream(p, { start, end, highWaterMark: 1 << 20 }));
+  return new Response(body, { status, headers });
 }
 
 function serve(req, res) {
@@ -351,6 +386,7 @@ else {
     sendOpen(projectArg(argv));
   });
   app.whenReady().then(() => {
+    protocol.handle("cutline-file", serveMedia);
     // The editor has its own shortcuts (Ctrl+= zooms the timeline, not the page). macOS keeps a minimal
     // menu so Cmd+C/V/X/A/Q still work in text boxes.
     Menu.setApplicationMenu(process.platform === "darwin"

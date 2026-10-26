@@ -598,6 +598,7 @@ export function selectAll() {
 // ---------------- clipboard ----------------
 
 let clipboard = null; // { main: [seg], texts: [text], overlays, audio, effects }
+export const hasClipboard = () => !!clipboard && Object.values(clipboard).some((l) => l.length);
 
 export function copySelection() {
   const { project, selection } = getState();

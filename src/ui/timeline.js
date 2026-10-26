@@ -10,11 +10,13 @@ import {
   pause, seek, splitAtPlayhead, deleteSelection, rippleDelete, duplicateSelection, addText, freezeFrame, splitItemAt,
   addMediaToTimeline, importFiles, copySettings, pasteSettings, clampZoom, zoomToFit, ZOOM_MIN, ZOOM_MAX, toast, trimToPlayhead, mirrorSelection,
   detachAudio, zoomTimeline, easeSpeedAtCut, neighbour, resetSpeedCurve, toggleMute, applyTransition, setTextSound,
+  copySelection, paste, hasClipboard,
 } from "../actions.js";
 import { createCompound, openCompound, closeCompound, breakApart } from "../compound.js";
 import { saveElement, addElement } from "../elements.js";
 import { keyTimes, shiftKeyframes, moveKeyTime, removeKeysAt } from "../keyframes.js";
 import { decodeMedia } from "../media-audio.js";
+import { cacheGet, cacheSet, mediaKey } from "../cache.js";
 import { addDefaultText } from "../presets.js";
 import { startReplace, ReplaceDialog } from "./replace.js";
 import { startCrop } from "./mask.js";
@@ -191,33 +193,57 @@ function freeTrackFrom(list, want, start, dur, skipId) {
 // ---------------- waveform ----------------
 
 const peaksCache = new Map(); // mediaId -> Float32Array (max abs per 10 ms)
+const peaksLoading = new Map(); // mediaId -> Promise<Float32Array | null>
+
+/**
+ * A file's waveform (0..1 every 10 ms). Worked out once per file and kept on disk, so reopening a project
+ * draws the waveforms straight away without decoding the whole recording's sound again.
+ */
+function loadPeaks(media) {
+  if (!peaksLoading.has(media.id)) peaksLoading.set(media.id, (async () => {
+    const key = "peaks|" + mediaKey(media);
+    const saved = await cacheGet(key);
+    if (saved instanceof Uint8Array) return Float32Array.from(saved, (v) => v / 255);
+    const buf = await decodeMedia(media);
+    if (!buf) return null;
+    const out = peaksOf(buf);
+    cacheSet(key, Uint8Array.from(out, (v) => Math.round(v * 255)));
+    return out;
+  })().catch(() => null));
+  return peaksLoading.get(media.id);
+}
 
 function usePeaks(media) {
   const [peaks, setPeaks] = useState(() => peaksCache.get(media?.id) || null);
   useEffect(() => {
     if (!media || peaks) return;
     let alive = true;
-    decodeMedia(media).then((buf) => {
-      if (!buf || !alive) return;
-      const step = Math.round(buf.sampleRate / 100);
-      const n = Math.ceil(buf.length / step);
-      const out = new Float32Array(n);
-      const chans = [...Array(buf.numberOfChannels)].map((_, i) => buf.getChannelData(i));
-      for (let i = 0; i < n; i++) {
-        let m = 0;
-        for (const d of chans) for (let j = i * step, e = Math.min(d.length, j + step); j < e; j += 4) { const v = Math.abs(d[j]); if (v > m) m = v; }
-        out[i] = m;
-      }
-      // Scale to the file's loudest moment so quiet recordings are still readable.
-      let max = 0;
-      for (const v of out) if (v > max) max = v;
-      if (max > 0) for (let i = 0; i < n; i++) out[i] /= max;
+    loadPeaks(media).then((out) => {
+      if (!out) return;
       peaksCache.set(media.id, out);
-      setPeaks(out);
+      if (alive) setPeaks(out);
     });
     return () => { alive = false; };
   }, [media?.id]);
   return peaks;
+}
+
+/** Loudest sample every 10 ms, scaled to the loudest moment of the file. */
+function peaksOf(buf) {
+  const step = Math.round(buf.sampleRate / 100);
+  const n = Math.ceil(buf.length / step);
+  const out = new Float32Array(n);
+  const chans = [...Array(buf.numberOfChannels)].map((_, i) => buf.getChannelData(i));
+  for (let i = 0; i < n; i++) {
+    let m = 0;
+    for (const d of chans) for (let j = i * step, e = Math.min(d.length, j + step); j < e; j += 4) { const v = Math.abs(d[j]); if (v > m) m = v; }
+    out[i] = m;
+  }
+  // Scale to the file's loudest moment so quiet recordings are still readable.
+  let max = 0;
+  for (const v of out) if (v > max) max = v;
+  if (max > 0) for (let i = 0; i < n; i++) out[i] /= max;
+  return out;
 }
 
 function Wave({ media, item, width, height }) {
@@ -274,7 +300,9 @@ function TrackHead({ k, label, icon, project, hide = true, mute = true }) {
 export function Timeline() {
   const trail = useStore((s) => s.compoundTrail);
   const project = useStore((s) => s.project);
-  const time = useStore((s) => s.time);
+  // The timeline itself only redraws when the playhead moves while paused (keyframe highlights);
+  // during playback only the small Playhead component below follows the time, so playing stays smooth.
+  const time = useStore((s) => (s.playing || !s.selection.length ? -1 : s.time));
   const zoom = useStore((s) => s.zoom);
   const canUndo = useStore((s) => s.canUndo);
   const canRedo = useStore((s) => s.canRedo);
@@ -297,15 +325,6 @@ export function Timeline() {
   }, []);
   // While playing, the timeline follows the playhead: it comes into view when you press play, and once it
   // reaches the middle of the visible area the timeline scrolls along so the playhead stays there.
-  const playing = useStore((s) => s.playing);
-  useEffect(() => {
-    const el = scroller.current;
-    if (!playing || !el) return;
-    const x = LABEL + time * zoom, view = el.clientWidth - LABEL;
-    const rel = x - el.scrollLeft - LABEL; // playhead position inside the visible track area
-    if (rel < 0 || rel > view) el.scrollLeft = Math.max(0, x - LABEL - view / 3);
-    else if (rel > view / 2) el.scrollLeft = x - LABEL - view / 2;
-  }, [playing, time, zoom]);
   const segs = layoutMain(project);
   // While the start of a main clip is being trimmed, it and the clips after it are drawn shifted by the
   // trimmed amount, so the edge stays under the mouse (the ripple happens on release).
@@ -733,7 +752,9 @@ export function Timeline() {
     const prev = kind === "text" || kind === "effect" ? null : neighbour(p, kind, item, -1);
     const items = [
       { label: "Split at playhead", icon: "scissors", onClick: splitAtPlayhead },
-      { label: "Duplicate", icon: "copy", onClick: duplicateSelection },
+      { label: "Duplicate (Ctrl+D)", icon: "copy-plus", onClick: duplicateSelection },
+      { label: "Copy (Ctrl+C)", icon: "copy", onClick: copySelection },
+      ...(hasClipboard() ? [{ label: "Paste at playhead (Ctrl+V)", icon: "clipboard-paste", onClick: paste }] : []),
       { label: "Copy settings (Ctrl+Alt+C)", icon: "clipboard-copy", onClick: copySettings },
       ...(getState().settingsClip ? [{ label: "Paste settings (Ctrl+Alt+V)", icon: "clipboard-paste", onClick: pasteSettings }] : []),
       ...(kind !== "text" && kind !== "effect" ? [{ label: item.mute ? "Unmute" : "Mute", icon: item.mute ? "volume-2" : "volume-x", onClick: toggleMute }] : []),
@@ -960,9 +981,7 @@ export function Timeline() {
         <${TrimTip} />
         <${ContextMenu} />
         <${ReplaceDialog} />
-        <div class="playhead" style=${{ left: LABEL + time * zoom }}>
-          <i class="ph-grab" title="Drag the playhead" onPointerDown=${(e) => { e.stopPropagation(); scrub(e); }} />
-        </div>
+        <${Playhead} scroller=${scroller} onGrab=${(e) => { e.stopPropagation(); scrub(e); }} />
       </div>
     </div>
   </section>`;
@@ -981,6 +1000,28 @@ function toggleMainMagnet() {
   setToggle("mainMagnet", on);
   if (on && getState().project.main.some((s) => s.gap)) { edit(closeMainGaps); toast("Main track magnet on: gaps closed"); }
   else toast(on ? "Main track magnet on" : "Main track magnet off: removing or moving a clip now leaves a gap");
+}
+
+/**
+ * The playhead line. It's its own component so moving it (60 times a second while playing) doesn't redraw
+ * the whole timeline. While playing, the timeline follows it: it comes into view when you press play, and
+ * once it reaches the middle of the visible area the timeline scrolls along so it stays there.
+ */
+function Playhead({ scroller, onGrab }) {
+  const time = useStore((s) => s.time);
+  const zoom = useStore((s) => s.zoom);
+  const playing = useStore((s) => s.playing);
+  useEffect(() => {
+    const el = scroller.current;
+    if (!playing || !el) return;
+    const x = LABEL + time * zoom, view = el.clientWidth - LABEL;
+    const rel = x - el.scrollLeft - LABEL; // position inside the visible track area
+    if (rel < 0 || rel > view) el.scrollLeft = Math.max(0, x - LABEL - view / 3);
+    else if (rel > view / 2) el.scrollLeft = x - LABEL - view / 2;
+  }, [playing, time, zoom]);
+  return html`<div class="playhead" style=${{ left: LABEL + time * zoom }}>
+    <i class="ph-grab" title="Drag the playhead" onPointerDown=${onGrab} />
+  </div>`;
 }
 
 /** Preview axis: the line under the mouse; the player shows that moment while you hover. */

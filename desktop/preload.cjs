@@ -7,7 +7,7 @@ contextBridge.exposeInMainWorld("cutlineDesktop", {
   /** Absolute path of a File the user picked or dropped ("" for generated files). */
   pathFor: (file) => { try { return webUtils.getPathForFile(file) || null; } catch { return null; } },
   /** A URL the page can load a local media file from (supports seeking). */
-  fileUrl: (path) => `/local-file?t=${token}&p=${encodeURIComponent(path)}`,
+  fileUrl: (path) => `cutline-file://media/?t=${token}&p=${encodeURIComponent(path)}`,
   exists: (path) => ipcRenderer.invoke("cutline:exists", path),
   saveProject: (json, path, name) => ipcRenderer.invoke("cutline:save", json, path, name),
   openProject: () => ipcRenderer.invoke("cutline:open"),

@@ -24,7 +24,8 @@ import { Timeline, dragGesture, setToggle } from "./ui/timeline.js";
 import { MaskHandles, CropBox } from "./ui/mask.js";
 import { ShapesTab } from "./ui/shapes.js";
 import { SettingsDialog } from "./ui/settings.js";
-import { loadSettings, settings as appSettings, lastDur, rememberDur } from "./settings.js";
+import { cacheGet, cacheSet, mediaKey } from "./cache.js";
+import { loadSettings, settings as appSettings, setSetting, lastDur, rememberDur } from "./settings.js";
 import {
   EffectsTab, FiltersTab, AudioTab, TextTab, AdjustmentTab, AudioPresetsTab, MediaKitsTab, ElementsTab,
 } from "./ui/library.js";
@@ -262,6 +263,37 @@ function LeftPanel() {
   </aside>`;
 }
 
+/**
+ * A video's picture in the library. Taken from the video once, then kept on disk, so the library doesn't open
+ * every recording again each time the app starts.
+ */
+function MediaPoster({ m }) {
+  const key = "poster|" + mediaKey(m);
+  const [img, setImg] = useState(() => posters.get(key));
+  useEffect(() => {
+    if (img) return;
+    let alive = true;
+    cacheGet(key).then((v) => alive && setImg(v || false));
+    return () => { alive = false; };
+  }, [key]);
+  if (img) return html`<img src=${img} draggable="false" />`;
+  if (img === undefined || !m.url) return html`<div class="poster-wait" />`;
+  const grab = (e) => {
+    const v = e.currentTarget;
+    try {
+      const c = document.createElement("canvas");
+      c.width = 192; c.height = Math.max(1, Math.round((192 * v.videoHeight) / Math.max(1, v.videoWidth)));
+      c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
+      const url = c.toDataURL("image/jpeg", 0.75);
+      posters.set(key, url);
+      cacheSet(key, url);
+      setImg(url);
+    } catch { /* keep the video */ }
+  };
+  return html`<video src=${m.url + "#t=0.5"} crossOrigin="anonymous" muted preload="metadata" onSeeked=${grab} onLoadedData=${(e) => e.currentTarget.currentTime >= 0.4 && grab(e)} />`;
+}
+const posters = new Map(); // key -> data URL (this session)
+
 function MediaTab() {
   const media = useStore((s) => s.project.media);
   const previewing = useStore((s) => s.preview?.mediaId);
@@ -289,7 +321,7 @@ function MediaTab() {
           ${m.kind === "image" ? html`<img src=${m.url} draggable="false" />`
             : m.kind === "audio" ? html`<div class="audio-thumb"><${Icon} n="audio-lines" size=${26} /></div>`
             : m.kind === "compound" ? html`<div class="audio-thumb compound-thumb"><${Icon} n="layers" size=${26} /></div>`
-            : html`<video src=${m.url ? m.url + "#t=0.5" : ""} muted preload="metadata" />`}
+            : html`<${MediaPoster} m=${m} />`}
           <span class="mdur">${m.missing ? "missing" : m.kind === "image" ? "" : fmt(m.duration).replace(/\.\d+$/, "")}</span>
           ${m.path && scans?.[m.path] != null && scans[m.path] < 1 && html`<span class="mproxy busy" title="Reading this recording once so exports are fast">⏳ ${Math.round(scans[m.path] * 100)}%</span>`}
           ${proxies?.[m.id]?.state === "ready" && html`<span class="mproxy" title="Smooth preview ready">⚡</span>`}
@@ -322,11 +354,15 @@ function TransitionsTab() {
 
 // ---------------- player + on-screen transform controls ----------------
 
+/** The playhead time under the player (its own component, so the player doesn't redraw every frame). */
+function TimeReadout() {
+  return fmt(useStore((s) => s.time));
+}
+
 function Player() {
   const canvas = useRef();
   const stage = useRef();
   const { width, height } = useStore((s) => s.project);
-  const time = useStore((s) => s.time);
   const playing = useStore((s) => s.playing);
   const duration = useStore((s) => projectDuration(s.project));
   const previewW = width >= height ? 960 : Math.round(960 * (width / height));
@@ -376,7 +412,7 @@ function Player() {
       </div>`}
     </div>
     <div class="transport">
-      <span class="tc"><b>${fmt(time)}</b> <span>${fmt(duration)}</span></span>
+      <span class="tc"><b><${TimeReadout} /></b> <span>${fmt(duration)}</span></span>
       <span class="tcenter">
         <button class="ibtn" onClick=${() => seek(0)} title="Go to start (Home)"><${Icon} n="skip-back" /></button>
         <button class="ibtn play" onClick=${togglePlay} title="Play/pause (Space)"><${Icon} n=${playing ? "pause" : "play"} size=${18} /></button>
@@ -433,7 +469,7 @@ function setProps(p, kind, id, props, time) {
 
 function TransformOverlay({ rect }) {
   const project = useStore((s) => s.project);
-  const time = useStore((s) => s.time);
+  const time = useStore((s) => (s.playing && !s.selection.length ? Math.floor(s.time * 4) / 4 : s.time));
   const selection = useStore((s) => s.selection);
   const guides = useStore((s) => s.guides);
   const axis = useStore((s) => s.axis);
@@ -731,13 +767,21 @@ function ExportDialog({ onClose }) {
   const [codec, setCodec] = useState(def.exportCodec || "avc");
   const [quality, setQuality] = useState(def.exportQuality || "high");
   const [encoder, setEncoder] = useState(def.encoder || "auto");
-  const [customKbps, setCustomKbps] = useState(40000);
+  const [customKbps, setCustomKbps] = useState(def.exportKbps || 40000);
   const [smooth, setSmooth] = useState(() => { try { return localStorage.getItem("cutline.smoothMotion") || "off"; } catch { return "off"; } });
   const [blur, setBlur] = useState(() => { try { return +(localStorage.getItem("cutline.motionBlur") ?? 0); } catch { return 0; } });
   const [support, setSupport] = useState(null);
   const abort = useRef(null);
   const size = sizeFor(p, res);
   useEffect(() => { setSupport(null); supportedCodecs(size.width, size.height, fps).then(setSupport); }, [res, fps]);
+  // What you pick here is remembered: the next export opens with the same settings (also Settings › Export).
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) { first.current = false; return; }
+    const now = { exportRes: res, exportFps: fps, exportCodec: codec, exportQuality: quality, encoder, exportKbps: customKbps };
+    const t = setTimeout(() => { for (const [k, v] of Object.entries(now)) if (appSettings()[k] !== v) setSetting(k, v); }, 400);
+    return () => clearTimeout(t);
+  }, [res, fps, codec, quality, encoder, customKbps]);
   const run = async () => {
     pause();
     setPhase("running");
@@ -755,7 +799,8 @@ function ExportDialog({ onClose }) {
         try { await exportMp4(rootProject(), setProgress, abort.current.signal, o); }
         catch (err) { await desktop.exportEnd(file.id, true); throw err; }
         setSaved(file.path);
-        setUrl(desktop.fileUrl(file.path));
+        // A fresh address each time: an earlier export saved over the same file must never be shown instead.
+        setUrl(desktop.fileUrl(file.path) + "&v=" + Date.now());
         setPhase(`in ${((performance.now() - started) / 1000).toFixed(1)}s`);
         return;
       }
@@ -898,10 +943,16 @@ function useShortcuts(openShortcuts, openExport) {
       // Save/open work even while typing.
       if (mod && key === "s") { e.preventDefault(); saveProject({ saveAs: e.shiftKey }); return; }
       if (mod && key === "o") { e.preventDefault(); if (desktop) openProject(); else document.querySelector(".menu input[type=file]")?.click(); return; }
-      if (e.target.closest?.("input, textarea, select")) {
-        if (e.key === "Escape") e.target.blur();
+      // Typing in a box keeps its keys. A slider, checkbox or colour well that still has focus (you just
+      // changed a volume, say) doesn't block the editor's shortcuts — Ctrl+C / V / D used to do nothing then.
+      const t = e.target;
+      const typing = t.closest?.("textarea, select, [contenteditable='true']")
+        || (t.tagName === "INPUT" && !/^(range|checkbox|radio|color|button)$/.test(t.type));
+      if (typing) {
+        if (e.key === "Escape") t.blur();
         return;
       }
+      if (t.tagName === "INPUT" && !mod && /^(arrow|home$|end$|page)/.test(key)) return; // the slider's own keys
       const fps = getState().project.fps;
       const run = (fn) => { e.preventDefault(); fn(); };
       // While a library item is previewing, playback keys drive the preview.
@@ -962,6 +1013,13 @@ function useShortcuts(openShortcuts, openExport) {
       if (key === "?") return run(openShortcuts);
     };
     window.addEventListener("keydown", onKey);
+    // Clicking the timeline, player or anywhere outside a box takes the focus out of the box, so the
+    // keyboard shortcuts work on what you just clicked.
+    const onDown = (e) => {
+      const a = document.activeElement;
+      if (a && a !== document.body && a.matches?.("input, textarea, select") && !e.target.closest?.("input, textarea, select, label")) a.blur();
+    };
+    window.addEventListener("pointerdown", onDown, true);
     // Space only ever plays / pauses (or the library preview), except while typing. It must not press a
     // focused button, tick a checkbox or open a dropdown, so it's caught first and its default is stopped.
     const typing = (el) => !!el?.closest?.("textarea, [contenteditable]:not([contenteditable=false])")
@@ -976,6 +1034,7 @@ function useShortcuts(openShortcuts, openExport) {
     window.addEventListener("keyup", onSpace, true);
     return () => {
       window.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointerdown", onDown, true);
       window.removeEventListener("keydown", onSpace, true);
       window.removeEventListener("keyup", onSpace, true);
     };

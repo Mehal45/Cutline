@@ -93,7 +93,7 @@ function previewSrc(item, media) {
 export function elementFor(seg, media) {
   let el = elements.get(seg.id);
   const src = previewSrc(seg, media);
-  if (el && el.dataset.src === src) { swaps.delete(seg.id); return el; }
+  if (el && el.dataset.src === src) { swaps.delete(seg.id); return touch(el); }
   if (el instanceof HTMLMediaElement) {
     // Switching between the original and its proxy (a proxy finished building, or play needs the sound):
     // the new file loads in the background while the old one stays on screen, so the clip never goes black.
@@ -109,24 +109,82 @@ export function elementFor(seg, media) {
     if (!ready && !renderLock.exporting && el.readyState >= 2) return el;
     swaps.delete(seg.id);
     if (!ready) next.currentTime = el.currentTime;
-    dispose(el);
-    elements.set(seg.id, next);
-    return next;
+    release(el);
+    adopt(seg.id, next);
+    return touch(next);
+  }
+  // Players are shared: a clip borrows an idle player of the same file (already open, its nearby data already
+  // read) instead of opening the file again. Projects cut from one long recording used to open dozens of
+  // players on it, which made slow (hard) disks crawl.
+  const spare = media.kind !== "image" && [...(pools.get(src) || [])].filter((x) => performance.now() - x._used > 400)
+    .sort((a, b) => b._used - a._used)[0];
+  if (spare) {
+    if (spare._owner) elements.delete(spare._owner);
+    adopt(seg.id, spare);
+    return touch(spare);
   }
   el = makeElement(media, src);
-  elements.set(seg.id, el);
+  adopt(seg.id, el);
+  trimPools();
+  return touch(el);
+}
+
+const pools = new Map(); // src -> Set of media elements playing that file
+const touch = (el) => {
+  el._used = performance.now();
+  if (el instanceof HTMLMediaElement && el.preload !== "auto") el.preload = "auto";
   return el;
+};
+/**
+ * Players not used for a moment stop reading ahead ("metadata"), so on a slow disk they don't compete with
+ * the clip on screen; they still keep what they've already read for when they're needed again.
+ */
+function quietIdle() {
+  const now = performance.now();
+  for (const set of pools.values()) for (const el of set) {
+    if (el instanceof HTMLMediaElement && now - el._used > 1000 && el.preload !== "metadata") el.preload = "metadata";
+  }
+}
+function adopt(id, el) {
+  el._owner = id;
+  elements.set(id, el);
+  const src = el.dataset.src;
+  if (!pools.has(src)) pools.set(src, new Set());
+  pools.get(src).add(el);
+}
+/** Stops and forgets a player (when it was replaced by one for another file). */
+function release(el) {
+  if (el._owner && elements.get(el._owner) === el) elements.delete(el._owner);
+  pools.get(el.dataset.src)?.delete(el);
+  dispose(el);
+}
+/** Keeps at most a few players per file and a dozen in all, closing the ones unused the longest. */
+function trimPools() {
+  const now = performance.now();
+  const all = [...pools.values()].flatMap((s) => [...s]).filter((x) => x instanceof HTMLMediaElement);
+  const idle = all.filter((x) => now - x._used > 2000).sort((a, b) => a._used - b._used);
+  let extra = all.length - 12;
+  for (const x of idle) {
+    const many = (pools.get(x.dataset.src)?.size || 0) > 3;
+    if (extra <= 0 && !many) continue;
+    release(x);
+    extra--;
+  }
 }
 
 const swaps = new Map(); // segId -> element loading the new source (shown once it has a frame)
 
 function makeElement(media, src) {
   let el;
+  // Files are served by the app (another origin than the page): "anonymous" lets them be drawn into the
+  // effects / transition canvases and routed through the sound effects.
   if (media.kind === "image") {
     el = new Image();
+    el.crossOrigin = "anonymous";
     el.src = media.url;
   } else if (media.kind === "audio") {
     el = new Audio();
+    el.crossOrigin = "anonymous";
     el.src = media.url;
     el.preload = "auto";
   } else {
@@ -1000,6 +1058,7 @@ export function syncMedia(project, t, playing) {
     if (!active.has(id) && el instanceof HTMLMediaElement && !el.paused) el.pause();
   }
   if (playing) prerollUpcoming(project, t, active);
+  quietIdle();
   return Promise.all(waits);
 }
 
@@ -1075,8 +1134,9 @@ function syncInto(project, t, playing, active, waits, outer) {
  */
 function prerollUpcoming(project, t, active) {
   const soon = [];
-  for (const s of layoutMain(project)) if (s.start > t && s.start - t < 1.5) soon.push(s);
-  for (const list of [project.overlays, project.audio, textSounds(project)]) for (const x of list || []) if (x.start > t && x.start - t < 1.5) soon.push(x);
+  // 3 s ahead: enough for a slow disk to have the next clip's first frame ready at the cut.
+  for (const s of layoutMain(project)) if (s.start > t && s.start - t < 3) soon.push(s);
+  for (const list of [project.overlays, project.audio, textSounds(project)]) for (const x of list || []) if (x.start > t && x.start - t < 3) soon.push(x);
   for (const item of soon) {
     if (active.has(item.id)) continue;
     const media = project.media[item.mediaId];

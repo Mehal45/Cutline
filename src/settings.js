@@ -14,6 +14,7 @@ export const DEFAULTS = {
   exportFps: "project",
   exportCodec: "avc",
   exportQuality: "high",
+  exportKbps: 40000, // custom bitrate
   encoder: "auto", // "auto" | "hardware" | "software"
   exportDir: "", // "" = ask / Downloads
   askExportPath: true,

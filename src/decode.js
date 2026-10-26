@@ -117,12 +117,29 @@ async function demuxLazy(src) {
   return { config, samples, src, lazy: true };
 }
 
-/** Makes sure samples[from..to) have their bytes (big files read ahead ~120 frames at a time). */
+/**
+ * Makes sure samples[from..to) have their bytes. Big files are read ~120 frames at a time, and the next
+ * stretch is read in the background while this one decodes, so a slow disk doesn't stop the export at
+ * every stretch.
+ */
 export async function ensureData(demuxed, from, to) {
   if (!demuxed.lazy) return;
-  for (let k = from; k < to; k++) {
-    if (!demuxed.samples[k].data) { await loadData(demuxed.src, demuxed.samples, k, Math.min(demuxed.samples.length, Math.max(to, k + 120))); return; }
+  const S = demuxed.samples;
+  let k = from;
+  while (k < to && S[k].data) k++;
+  if (k < to) {
+    const a = demuxed.ahead;
+    if (a?.busy && k >= a.from && k < a.to) await a.promise;
+    while (k < to && S[k].data) k++;
+    if (k < to) await loadData(demuxed.src, S, k, Math.min(S.length, Math.max(to, k + 120)));
   }
+  if (demuxed.ahead?.busy) return;
+  let n = to;
+  while (n < S.length && S[n].data) n++;
+  if (n >= S.length || n - to > 240) return;
+  const a = { from: n, to: Math.min(S.length, n + 120), busy: true };
+  a.promise = loadData(demuxed.src, S, a.from, a.to).catch(() => {}).finally(() => { a.busy = false; });
+  demuxed.ahead = a;
 }
 export const releaseData = (demuxed, from, to) => demuxed.lazy && dropData(demuxed.samples, from, to);
 
@@ -223,14 +240,30 @@ export class SegmentDecoder {
     });
   }
 
-  async feed(n = 8) {
-    const from = this.next, to = Math.min(this.samples.length, from + n);
-    await ensureData(this.demuxed, from, to);
-    for (let i = from; i < to; i++, this.next++) {
-      const s = this.samples[i];
-      this.decoder.decode(new EncodedVideoChunk({ type: s.key ? "key" : "delta", timestamp: s.ts, duration: s.dur, data: s.data }));
-    }
-    releaseData(this.demuxed, from, to);
+  /** Sends the next `n` frames to the decoder. Calls run one after another, so frames always go in order. */
+  feed(n = 8) {
+    const run = async () => {
+      if (this.decoder.state === "closed") return;
+      const from = this.next, to = Math.min(this.samples.length, from + n);
+      await ensureData(this.demuxed, from, to);
+      if (this.decoder.state === "closed") return;
+      for (let i = from; i < to; i++, this.next++) {
+        const s = this.samples[i];
+        this.decoder.decode(new EncodedVideoChunk({ type: s.key ? "key" : "delta", timestamp: s.ts, duration: s.dur, data: s.data }));
+      }
+      releaseData(this.demuxed, from, to);
+    };
+    this.pending = (this.pending || 0) + 1;
+    const p = (this.feeding || Promise.resolve()).then(run, run);
+    this.feeding = p.catch((e) => { this.error ||= e; }).finally(() => { this.pending--; });
+    return p;
+  }
+
+  /** Keeps a few frames decoding ahead while the export draws and encodes the current one. */
+  topUp() {
+    if (this.pending || this.done || this.error || this.next >= this.samples.length) return;
+    if (this.queue.length + this.decoder.decodeQueueSize >= 8) return;
+    this.feed(4).catch(() => {});
   }
 
   /** Returns the frame to show at source time t (seconds). The frame stays owned by the decoder. */
@@ -243,11 +276,15 @@ export class SegmentDecoder {
         this.current?.close();
         this.current = this.queue.shift();
       }
-      if (this.queue.length || this.done) return this.current ?? this.queue[0] ?? null;
+      if (this.queue.length || this.done) {
+        this.topUp();
+        return this.current ?? this.queue[0] ?? null;
+      }
       if (this.next < this.samples.length) {
         if (this.decoder.decodeQueueSize > 12) await this.waitOutput();
         else await this.feed();
       } else {
+        if (this.pending) { await this.feeding; continue; }
         this.flushing ??= this.decoder.flush().then(() => { this.done = true; this.wake(); }, (e) => { this.error = e; });
         await this.waitOutput();
       }
@@ -265,6 +302,7 @@ export class SegmentDecoder {
         if (this.decoder.decodeQueueSize > 12) await this.waitOutput();
         else await this.feed();
       } else {
+        if (this.pending) { await this.feeding; continue; }
         this.flushing ??= this.decoder.flush().then(() => { this.done = true; this.wake(); }, (e) => { this.error = e; });
         await this.waitOutput();
       }

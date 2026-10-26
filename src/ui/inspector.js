@@ -1,6 +1,6 @@
 // Right-hand inspector: properties of whatever is selected.
 import React, { useState, useRef, useEffect } from "react";
-import { useStore, edit, editLive, checkpoint, findItem, getState, setState } from "../store.js";
+import { useStore, usePanelTime, edit, editLive, checkpoint, findItem, getState, setState } from "../store.js";
 import { clipSpeed, clipTransform, BLEND_MODES, ANIMATIONS, TRANSITIONS, itemBounds } from "../engine.js";
 import {
   deleteSelection, rippleDelete, copySelection, duplicateSelection, setClipSpeed, SPEED_PRESETS, freezeFrame,
@@ -161,7 +161,7 @@ function AlignRow({ kind, id }) {
 /** CapCut-style keyframe button: position, scale, rotation and opacity together, at the playhead. */
 function KeyAllButton({ kind, id }) {
   const project = useStore((s) => s.project);
-  useStore((s) => s.time);
+  usePanelTime();
   const item = findItem(project, kind, id);
   if (!item) return null;
   const on = allKeyedHere(project, kind, item);

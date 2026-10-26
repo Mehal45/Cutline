@@ -140,6 +140,12 @@ export function useStore(selector) {
   );
 }
 
+/**
+ * The playhead time for panels that show values at the playhead (sliders, keyframe buttons…). While playing
+ * it only changes `hz` times a second, so those panels don't redraw on every frame and playback stays smooth.
+ */
+export const usePanelTime = (hz = 8) => useStore((s) => (s.playing ? Math.floor(s.time * hz) / hz : s.time));
+
 // ---- derived timeline helpers ----
 
 /**
