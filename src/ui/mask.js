@@ -1,30 +1,49 @@
 // Masks (shapes that cut out part of a clip) and the crop tool: inspector controls plus the handles drawn
 // over the player to move / resize / rotate a mask and to drag a crop box.
 import { useEffect } from "react";
-import { useStore, getState, setState, edit, editLive, checkpoint, findItem } from "../store.js";
-import { MASK_SHAPES, maskBox, transformAt } from "../engine.js";
-import { localTime, toast } from "../actions.js";
-import { html, Icon, Section, Slider } from "./kit.js";
+import { useStore, usePanelTime, getState, setState, edit, editLive, checkpoint, findItem } from "../store.js";
+import { MASK_SHAPES, MASK_PROPS, maskAt, maskBox, transformAt } from "../engine.js";
+import { localTime, toast, toggleAllKeyframes, allKeyedHere, MASK_MOTION_PROPS } from "../actions.js";
+import { hasKeys, setKey } from "../keyframes.js";
+import { html, Icon, Section, KSlider } from "./kit.js";
 
 const pct = (v) => `${Math.round(v * 100)}%`;
 const set = (kind, id) => (fn, live) => (live ? editLive : edit)((p) => { const it = findItem(p, kind, id); if (it) fn(it); });
 const NEW_MASK = { x: 0.5, y: 0.5, w: 0.5, h: 0.5, rot: 0, radius: 0, feather: 0, invert: false };
 
+/**
+ * Writes mask fields at local time lt: a number that has keyframes gets a keyframe there, everything else
+ * (and the shape) changes for the whole clip.
+ */
+function writeMask(it, lt, fields) {
+  it.mask = { ...it.mask };
+  for (const [k, v] of Object.entries(fields)) {
+    if (MASK_PROPS.includes(k) && hasKeys(it, "mask." + k)) setKey(it, "mask." + k, Math.max(0, Math.min(it.dur, lt)), v);
+    else it.mask[k] = v;
+  }
+}
+const dropMaskKeys = (it) => { for (const k of MASK_PROPS) if (it.keyframes) delete it.keyframes["mask." + k]; };
+
 // ---------------- inspector: Mask tab ----------------
 
 export function MaskSection({ kind, item }) {
   const s = set(kind, item.id);
-  const m = item.mask?.shape ? item.mask : null;
+  const project = useStore((st) => st.project);
+  const time = usePanelTime();
+  const lt = localTime(project, kind, item, time);
+  const m = maskAt(item, lt);
   // While this tab is open the player shows the mask's handles.
   useEffect(() => { setState({ maskEditing: item.id }); return () => setState({ maskEditing: null }); }, [item.id]);
   const pick = (shape) => s((it) => {
-    if (shape === "none") { delete it.mask; return; }
+    if (shape === "none") { delete it.mask; dropMaskKeys(it); return; }
     it.mask = { ...NEW_MASK, ...(it.mask || {}), shape };
     if (shape === "split" || shape === "band") it.mask.h = it.mask.shape === "band" ? 0.3 : it.mask.h;
   });
-  const field = (k) => (v, live) => s((it) => (it.mask = { ...it.mask, [k]: v }), live);
   const sq = m && (m.shape === "square" || m.shape === "circle");
   const lineish = m && (m.shape === "split" || m.shape === "band");
+  const ks = (path, label, min, max, step, format, fallback) =>
+    html`<${KSlider} kind=${kind} id=${item.id} path=${"mask." + path} label=${label} min=${min} max=${max} step=${step} format=${format} fallback=${fallback} />`;
+  const keyed = m && allKeyedHere(project, kind, item, time, MASK_MOTION_PROPS);
   return html`<div>
     <${Section} title="Mask shape">
       <div class="mask-grid">
@@ -35,17 +54,18 @@ export function MaskSection({ kind, item }) {
       ${m && html`<p class="muted small">Drag the shape in the player to move it, the white corner to resize, the round knob above it to rotate${m.shape === "rect" || m.shape === "square" ? " and the yellow knob to round the corners" : ""}.</p>`}
     <//>
     ${m && html`<${Section} title="Mask settings">
-      <div class="grid2">
-        <${Slider} label="Position X" value=${m.x} min=${-0.5} max=${1.5} step=${0.005} format=${pct} onChange=${field("x")} />
-        <${Slider} label="Position Y" value=${m.y} min=${-0.5} max=${1.5} step=${0.005} format=${pct} onChange=${field("y")} />
-        ${m.shape !== "split" && html`<${Slider} label=${sq ? "Size" : "Width"} value=${m.w} min=${0.02} max=${2} step=${0.005} format=${pct} onChange=${field("w")} />`}
-        ${!sq && m.shape !== "split" && html`<${Slider} label="Height" value=${m.h} min=${0.02} max=${2} step=${0.005} format=${pct} onChange=${field("h")} />`}
-      </div>
-      <${Slider} label="Rotation" value=${m.rot || 0} min=${-180} max=${180} step=${1} format=${(v) => `${Math.round(v)}°`} onChange=${field("rot")} />
-      ${(m.shape === "rect" || m.shape === "square") && html`<${Slider} label="Corner radius" value=${m.radius || 0} min=${0} max=${1} step=${0.01} format=${pct} onChange=${field("radius")} />`}
-      <${Slider} label="Feather (soft edge)" value=${m.feather || 0} min=${0} max=${30} step=${0.5} format=${(v) => v.toFixed(1)} onChange=${field("feather")} />
+      <button class=${"keyall" + (keyed ? " on" : "")} onClick=${() => toggleAllKeyframes(kind, item.id, MASK_MOTION_PROPS, "the mask's position, size and rotation")}
+        title=${keyed ? "Remove the mask keyframes at the playhead" : "Add keyframes for the mask's position, size and rotation at the playhead. Then move the playhead and drag the shape: it moves there over time."}>
+        ◆ ${keyed ? "Mask keyframed" : "Keyframe the mask"}</button>
+      ${ks("x", "Position X", -0.5, 1.5, 0.005, pct, 0.5)}
+      ${ks("y", "Position Y", -0.5, 1.5, 0.005, pct, 0.5)}
+      ${m.shape !== "split" && ks("w", sq ? "Size" : "Width", 0.02, 2, 0.005, pct, 0.5)}
+      ${!sq && m.shape !== "split" && ks("h", "Height", 0.02, 2, 0.005, pct, 0.5)}
+      ${ks("rot", "Rotation", -180, 180, 1, (v) => `${Math.round(v)}°`, 0)}
+      ${(m.shape === "rect" || m.shape === "square") && ks("radius", "Corner radius", 0, 1, 0.01, pct, 0)}
+      ${ks("feather", "Feather (soft edge)", 0, 30, 0.5, (v) => v.toFixed(1), 0)}
       <label class="check"><input type="checkbox" checked=${!!m.invert} onChange=${(e) => s((it) => (it.mask = { ...it.mask, invert: e.target.checked }))} /> Invert (keep what's outside the shape)</label>
-      ${!lineish && html`<button class="wide" onClick=${() => s((it) => (it.mask = { ...it.mask, x: 0.5, y: 0.5, rot: 0 }))}><${Icon} n="locate-fixed" /> Centre the shape</button>`}
+      ${!lineish && html`<button class="wide" onClick=${() => s((it) => writeMask(it, lt, { x: 0.5, y: 0.5, rot: 0 }))}><${Icon} n="locate-fixed" /> Centre the shape</button>`}
       <button class="wide" onClick=${() => pick("none")}><${Icon} n="trash-2" /> Remove mask</button>
     <//>`}
   </div>`;
@@ -95,16 +115,18 @@ export function MaskHandles({ kind, item, rect, overlay }) {
   const project = useStore((s) => s.project);
   useStore((s) => s.time);
   const f = frameOnScreen(project, kind, item, rect);
-  const m = item.mask;
-  if (!f || !m?.shape) return null;
+  const lt = localTime(project, kind, item, getState().time);
+  const m = maskAt(item, lt);
+  if (!f || !m) return null;
   const b = maskBox(m, f.fw, f.fh);
   const sq = m.shape === "square" || m.shape === "circle";
-  const update = (fn) => editLive((p) => { const it = findItem(p, kind, item.id); it.mask = { ...it.mask }; fn(it.mask); });
+  // Keyframed numbers get a keyframe at the playhead; the others change for the whole clip.
+  const update = (fields) => editLive((p) => writeMask(findItem(p, kind, item.id), lt, fields));
   const el = () => overlay.current;
 
   const startMove = (e) => {
     const p0 = toFrame(f, el(), e), x0 = m.x, y0 = m.y;
-    drag(e, (ev) => { const p = toFrame(f, el(), ev); update((mm) => { mm.x = x0 + (p.x - p0.x) / f.fw; mm.y = y0 + (p.y - p0.y) / f.fh; }); });
+    drag(e, (ev) => { const p = toFrame(f, el(), ev); update({ x: x0 + (p.x - p0.x) / f.fw, y: y0 + (p.y - p0.y) / f.fh }); });
   };
   const local = (ev) => rotate({ x: toFrame(f, el(), ev).x - b.cx, y: toFrame(f, el(), ev).y - b.cy }, -(m.rot || 0));
   /**
@@ -126,30 +148,26 @@ export function MaskHandles({ kind, item, rect, overlay }) {
       const sx = sides.includes("e") ? (w - b0.w) / 2 : sides.includes("w") ? -(w - b0.w) / 2 : 0;
       const sy = sides.includes("s") ? (h - b0.h) / 2 : sides.includes("n") ? -(h - b0.h) / 2 : 0;
       const d = rotate({ x: sx, y: sy }, m0.rot || 0);
-      update((mm) => {
-        if (sq && !keepSquare) mm.shape = m0.shape === "square" ? "rect" : "ellipse";
-        mm.w = w / f.fw; mm.h = h / f.fh;
-        mm.x = m0.x + d.x / f.fw; mm.y = m0.y + d.y / f.fh;
+      update({
+        ...(sq && !keepSquare ? { shape: m0.shape === "square" ? "rect" : "ellipse" } : {}),
+        w: w / f.fw, h: h / f.fh, x: m0.x + d.x / f.fw, y: m0.y + d.y / f.fh,
       });
     });
   };
   const startSize = (e) => drag(e, (ev) => {
     const q = local(ev);
-    update((mm) => {
-      mm.w = Math.max(8, 2 * Math.abs(q.x)) / f.fw;
-      if (!sq) mm.h = Math.max(8, 2 * Math.abs(q.y)) / f.fh;
-    });
+    update({ w: Math.max(8, 2 * Math.abs(q.x)) / f.fw, ...(sq ? {} : { h: Math.max(8, 2 * Math.abs(q.y)) / f.fh }) });
   });
   const startRot = (e) => drag(e, (ev) => {
     const p = toFrame(f, el(), ev);
     let deg = (Math.atan2(p.y - b.cy, p.x - b.cx) * 180) / Math.PI + 90;
     if (deg > 180) deg -= 360;
     if (ev.shiftKey) deg = Math.round(deg / 15) * 15;
-    update((mm) => { mm.rot = Math.round(deg * 10) / 10; });
+    update({ rot: Math.round(deg * 10) / 10 });
   });
   const startRadius = (e) => drag(e, (ev) => {
     const q = local(ev), half = Math.min(b.w, b.h) / 2;
-    update((mm) => { mm.radius = Math.max(0, Math.min(1, (q.x + b.w / 2) / half)); });
+    update({ radius: Math.max(0, Math.min(1, (q.x + b.w / 2) / half)) });
   });
 
   const line = m.shape === "split" || m.shape === "band";

@@ -191,7 +191,9 @@ export function CurveEditor({ kind, id }) {
   const path = curve
     ? `M${X(0)},${Y(0)} C${X(curve[0])},${Y(curve[1])} ${X(curve[2])},${Y(curve[3])} ${X(1)},${Y(1)}`
     : `M${X(0)},${Y(0)} H${X(1)} V${Y(1)}`;
-  const label = (k) => ({ x: "Position X", y: "Position Y", scale: "Scale", rotation: "Rotation", opacity: "Opacity", volume: "Volume" }[k]
+  const label = (k) => ({ x: "Position X", y: "Position Y", scale: "Scale", rotation: "Rotation", opacity: "Opacity", volume: "Volume",
+    "mask.x": "Mask X", "mask.y": "Mask Y", "mask.w": "Mask width", "mask.h": "Mask height", "mask.rot": "Mask rotation",
+    "mask.radius": "Mask corners", "mask.feather": "Mask feather" }[k]
     || k.replace(/^adjust\./, "").replace(/^fx\.[^.]+\.amount$/, "Effect amount").replace("filter.amount", "Filter amount"));
   return html`<div class="curve">
     <${Field} label="Property">

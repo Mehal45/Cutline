@@ -384,7 +384,7 @@ function drawVisual(ctx, project, item, lt, W, H) {
   const cw = sw * (1 - crop.l - crop.r), ch = sh * (1 - crop.t - crop.b);
   const draw = (c) => { if (cw > 0.5 && ch > 0.5) c.drawImage(src, sx, sy, cw, ch, (-sw * fit) / 2 + sx * fit, (-sh * fit) / 2 + sy * fit, cw * fit, ch * fit); };
   // Mask: the clip is drawn on its own layer and cut to the shape (soft edge = blurred shape).
-  const mask = item.mask?.shape && item.mask.shape !== "none" ? item.mask : null;
+  const mask = maskAt(item, lt);
   let masked = null;
   if (mask) {
     masked = scratch(40, W, H);
@@ -424,6 +424,19 @@ function drawVisual(ctx, project, item, lt, W, H) {
 
 export const MASK_SHAPES = [["rect", "Rectangle", "rectangle-horizontal"], ["square", "Square", "square"], ["circle", "Circle", "circle"],
   ["ellipse", "Ellipse", "egg"], ["heart", "Heart", "heart"], ["star", "Star", "star"], ["split", "Split", "square-split-vertical"], ["band", "Band", "rows-3"]];
+
+/** A mask's numbers that can be keyframed, as "mask.x", "mask.w"… in item.keyframes. */
+export const MASK_PROPS = ["x", "y", "w", "h", "rot", "radius", "feather"];
+
+/** The item's mask at local time lt (keyframed numbers applied), or null when it has none. */
+export function maskAt(item, lt) {
+  const m = item.mask;
+  if (!m?.shape || m.shape === "none") return null;
+  if (!item.keyframes) return m;
+  const out = { ...m };
+  for (const k of MASK_PROPS) out[k] = propAt(item, "mask." + k, lt, m[k] ?? 0);
+  return out;
+}
 
 /**
  * A mask's centre and size in the clip's frame (frame-centred pixels; the frame is fw × fh).

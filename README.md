@@ -3,7 +3,7 @@
 A free, open-source CapCut-style video editor for Windows and Mac. No account, no watermark, no upload: everything runs on your computer.
 
 - **Multi-track:** a main video track plus picture-in-picture layers, audio tracks (music, voice-overs) and timeline effects
-- **Keyframes** for position, scale, rotation, opacity, volume, colour and effect strength, with a curve editor
+- **Keyframes** for position, scale, rotation, opacity, volume, colour, effect strength and masks, with a curve editor
 - **57 GPU effects, 20 filters, 14 colour adjustments and 25 transitions**, all live in the preview
 - **Background removal** for people, plus a **chroma key** (green screen)
 - **Auto-captions** (Whisper) and **text-to-speech** with 16 natural voices (Kokoro), both on-device
@@ -22,7 +22,7 @@ A free, open-source CapCut-style video editor for Windows and Mac. No account, n
 - **Exact numbers:** every slider has a number box you can type into; volume is shown in decibels (0 dB = unchanged, −6 dB = half)
 - **Cut fast:** split, trim, ripple delete, merge, freeze frame, detach audio, speed 0.1–10×, magnetic snapping
 - **Timeline toggles (right of the timeline toolbar), like CapCut:** main track magnet (off = deleting, trimming or moving a main clip leaves empty space; on again closes the gaps), auto snapping, linkage (texts, layers, audio and effects move with the main clip they sit on) and preview axis (hover over the timeline to preview that moment)
-- **Masks:** Video › Mask: rectangle, square, circle, ellipse, heart, star, split and band; drag the shape in the player to move, resize, rotate and round its corners; feather and invert
+- **Masks:** Video › Mask: rectangle, square, circle, ellipse, heart, star, split and band; drag the shape in the player to move, resize, rotate and round its corners; feather and invert. **Keyframe the mask** keys its position, size and rotation so the shape moves and grows over time (after that, dragging it adds a keyframe at the playhead)
 - **Crop tool:** Crop button next to Freeze / Mirror (and in the timeline toolbar): drag the box in the player, with Free, Original, 16:9, 9:16, 1:1, 4:3 and 3:4
 - **Shapes:** library › Shapes: rectangles, circles, triangles, polygons, stars, hearts, speech bubbles, lines and many arrows; fill, outline or both, colours with opacity, outline width, size and corner radius
 - **Copy / paste settings:** copy every setting of a text or clip (style, font, animation, position, effects…) and paste it onto one or many others (Ctrl+Alt+C / Ctrl+Alt+V)

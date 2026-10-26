@@ -795,32 +795,35 @@ export function setAnimatable(kind, id, path, value, live = false) {
 /** What the "keyframe all" button keyframes together (with the value used when a property isn't set). */
 export const MOTION_PROPS = [["x", 0.5], ["y", 0.5], ["scale", 1], ["rotation", 0], ["opacity", 1]];
 
-/** True when position, scale, rotation and opacity all have a keyframe at the playhead. */
-export function allKeyedHere(project, kind, item, time = getState().time) {
+/** The mask's move / size / turn, keyframed together by the Mask tab's keyframe button. */
+export const MASK_MOTION_PROPS = [["mask.x", 0.5], ["mask.y", 0.5], ["mask.w", 0.5], ["mask.h", 0.5], ["mask.rot", 0]];
+
+/** True when every property of `props` (default: position, scale, rotation, opacity) has a keyframe at the playhead. */
+export function allKeyedHere(project, kind, item, time = getState().time, props = MOTION_PROPS) {
   const lt = localTime(project, kind, item, time);
-  return MOTION_PROPS.every(([k]) => keyAt(item, k, lt));
+  return props.every(([k]) => keyAt(item, k, lt));
 }
 
 /**
- * Like CapCut's keyframe button: one click keyframes position, scale, rotation and opacity together at the
- * playhead; clicking again (all there) removes them.
+ * Like CapCut's keyframe button: one click keyframes position, scale, rotation and opacity (or `props`) together
+ * at the playhead; clicking again (all there) removes them.
  */
-export function toggleAllKeyframes(kind, id) {
+export function toggleAllKeyframes(kind, id, props = MOTION_PROPS, what = "position, scale, rotation and opacity") {
   const p0 = getState().project;
   const item = findItem(p0, kind, id);
   if (!item) return;
   const lt = localTime(p0, kind, item);
   if (lt < -1e-3 || lt > item.dur + 1e-3) return toast("Move the playhead over the item first");
   const t = Math.max(0, Math.min(item.dur, lt));
-  const all = allKeyedHere(p0, kind, item);
+  const all = allKeyedHere(p0, kind, item, undefined, props);
   edit((p) => {
     const it = findItem(p, kind, id);
-    for (const [k, fb] of MOTION_PROPS) {
+    for (const [k, fb] of props) {
       if (all) removeKey(it, k, t);
       else if (!keyAt(it, k, t)) setKey(it, k, t, propAt(it, k, t, fb));
     }
   });
-  toast(all ? "Removed the keyframes at the playhead" : "Keyframed position, scale, rotation and opacity");
+  toast(all ? "Removed the keyframes at the playhead" : "Keyframed " + what);
 }
 
 /** Adds a keyframe at the playhead holding the current value, or removes the one that is there. */
