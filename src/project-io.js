@@ -17,6 +17,12 @@ let currentPath = null;
 export const isDirty = () => { const p = rootProject(); return p !== savedSnapshot && hasContent(p); };
 const hasContent = (p) => p.main.length || p.texts.length || p.overlays?.length || p.audio?.length || p.effects?.length;
 export const projectName = () => (currentPath ? currentPath.split(/[\\/]/).pop().replace(/\.cutline$/i, "") : "Untitled");
+// The open project's file changed: window title and header follow (the header watches projectPath).
+function setPath(path) {
+  currentPath = path;
+  desktop?.setTitle(projectName());
+  setState({ projectPath: path });
+}
 
 function toBase64(buf) {
   let s = "";
@@ -80,8 +86,7 @@ export async function loadProject(text, path = null) {
   resetCompounds();
   setState({ project, selection: [], time: 0, playing: false, canUndo: false, canRedo: false, relink: missing.length ? missing : null });
   savedSnapshot = project;
-  currentPath = path;
-  desktop?.setTitle(projectName());
+  setPath(path);
   setState({ home: false });
   if (path) rememberRecent(path, 2500);
   return missing;
@@ -109,8 +114,7 @@ export async function saveProject({ saveAs = false } = {}) {
   if (desktop) {
     const path = await desktop.saveProject(json, saveAs ? null : currentPath, projectName());
     if (!path) return false;
-    currentPath = path;
-    desktop.setTitle(projectName());
+    setPath(path);
     desktop.clearAutosave();
     rememberRecent(path, 0);
   } else {
@@ -168,8 +172,7 @@ export async function newProject() {
   resetCompounds();
   setState({ project, selection: [], time: 0, playing: false, canUndo: false, canRedo: false, relink: null });
   savedSnapshot = project;
-  currentPath = null;
-  desktop?.setTitle(projectName());
+  setPath(null);
   setState({ home: false });
 }
 
@@ -243,9 +246,8 @@ export function saveQuietly() {
       const snapshot = rootProject();
       const path = await desktop.saveProject(await serialize(snapshot), target, projectName());
       if (!path) return false;
-      currentPath = path;
+      setPath(path);
       savedSnapshot = snapshot;
-      desktop.setTitle(projectName());
       desktop.clearAutosave();
       setState({ autoSavedAt: Date.now() });
       await rememberRecent(path, isNew ? 0 : -1);

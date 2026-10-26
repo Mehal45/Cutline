@@ -188,7 +188,7 @@ function SaveStatus() {
 }
 
 function Header({ onExport, onShortcuts }) {
-  useStore((s) => s.autoSavedAt);
+  useStore((s) => s.projectPath); // re-render when another project is opened or saved under a new name
   const name = projectName();
   return html`<header class="topbar">
     <div class="row">
