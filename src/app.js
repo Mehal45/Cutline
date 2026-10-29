@@ -36,6 +36,7 @@ import { loadTextPresets, addDefaultText } from "./presets.js";
 import {
   saveProject, openProject, newProject, relink, startAutosave, checkRecovery, restoreRecovery, loadProject, desktop, projectName, openFromDisk, openLastProject,
 } from "./project-io.js";
+import { announceReady, sendExport } from "./embed.js";
 
 const additiveKey = (e) => e.shiftKey || e.ctrlKey || e.metaKey;
 setState({ snap: true, ...(() => { try { return JSON.parse(localStorage.getItem("cutline.timelineToggles") || "{}"); } catch { return {}; } })(), timelineH: Math.max(260, Math.min(460, Math.round(window.innerHeight * 0.38))), previewQuality: (() => { try { return +localStorage.getItem("cutline.previewQuality") || 1; } catch { return 1; } })(),
@@ -807,6 +808,7 @@ function ExportDialog({ onClose }) {
         return;
       }
       const blob = await exportMp4(rootProject(), setProgress, abort.current.signal, o);
+      sendExport(blob); // inside Flodit: the video goes back to it
       setUrl(URL.createObjectURL(blob));
       setPhase(`in ${((performance.now() - started) / 1000).toFixed(1)}s · ${(blob.size / 1e6).toFixed(1)} MB`);
     } catch (err) {
@@ -1053,6 +1055,7 @@ function App() {
     loadRecentFonts();
     loadTextPresets();
     startAutosave();
+    announceReady(); // inside Flodit: ready for the clips
     if (desktop) loadSystemFonts(); // the desktop app can list installed fonts without asking
     // Ctrl + wheel belongs to the timeline; never zoom the whole page.
     const noPageZoom = (e) => { if (e.ctrlKey || e.metaKey) e.preventDefault(); };

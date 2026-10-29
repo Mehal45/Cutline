@@ -11,6 +11,7 @@ import { ADJUST, FILTERS, EFFECTS, EFFECT_CATEGORIES } from "../fx.js";
 import { VOICE_EFFECTS } from "../audiofx.js";
 import { cutoutStatus, loadCutout } from "../segment.js";
 import { uid } from "../store.js";
+import { embedded, reportChatSlot } from "../embed.js";
 import { saveElement } from "../elements.js";
 import { html, Field, Section, KSlider, Slider, CurveEditor, Icon, db, secs, NumInput } from "./kit.js";
 import { FONTS, loadFont, familyCss, canListSystemFonts, loadSystemFonts, rememberFont, fontName } from "./fonts.js";
@@ -49,14 +50,25 @@ function Tabs({ tabs, tab, setTab }) {
   return html`<div class="itabs">${tabs.map(([k, l]) => html`<button key=${k} class=${tab === k ? "tab on" : "tab"} onClick=${() => setTab(k)}>${l}</button>`)}</div>`;
 }
 
-/** The inspector frame: text tabs along the top (Video · Audio · Speed …) and a scrolling body. */
+/**
+ * The inspector frame: text tabs along the top (Video · Audio · Speed …) and a scrolling body. Inside Flodit
+ * the first tab is always Chat, open by default and glowing (founder, Oct 29); Flodit draws its chat over
+ * the body while it's open (embed.js reports where).
+ */
 function Shell({ tabs, tab, setTab, children, note }) {
+  const chat = useStore((s) => s.floditChat) && embedded;
+  const slot = useRef(null);
+  useEffect(() => {
+    if (!chat || !slot.current) return reportChatSlot(null);
+    return reportChatSlot(slot.current);
+  }, [chat]);
   return html`<aside class="panel inspector">
     <nav class="itop">
-      ${tabs.map(([k, l]) => html`<button key=${k} class=${tab === k ? "on" : ""} onClick=${() => setTab?.(k)}>${l}</button>`)}
-      ${note && html`<span class="itop-note ell">${note}</span>`}
+      ${embedded && html`<button key="chat" class=${chat ? "chat-tab on" : "chat-tab"} onClick=${() => setState({ floditChat: true })}>Chat</button>`}
+      ${tabs.map(([k, l]) => html`<button key=${k} class=${!chat && tab === k ? "on" : ""} onClick=${() => { setState({ floditChat: false }); setTab?.(k); }}>${l}</button>`)}
+      ${note && !chat && html`<span class="itop-note ell">${note}</span>`}
     </nav>
-    <div class="ibody">${children}</div>
+    ${chat ? html`<div class="ibody chat-slot" ref=${slot}></div>` : html`<div class="ibody">${children}</div>`}
   </aside>`;
 }
 

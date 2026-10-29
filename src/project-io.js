@@ -60,6 +60,16 @@ async function restoreMedia(saved) {
   for (const m of Object.values(saved)) {
     if (m.kind === "compound") {
       media[m.id] = { ...m, url: "" };
+    } else if (m.src) {
+      // Media on the web (Flodit's B-roll, music and graphics for an AI edit).
+      try {
+        const blob = await (await fetch(m.src)).blob();
+        const file = new File([blob], m.name, { type: blob.type });
+        media[m.id] = { ...m, src: undefined, file, url: URL.createObjectURL(file) };
+      } catch {
+        media[m.id] = { ...m, missing: true, url: "" };
+        missing.push(m);
+      }
     } else if (m.data) {
       const blob = await (await fetch(m.data)).blob();
       const file = new File([blob], m.name, { type: blob.type });
