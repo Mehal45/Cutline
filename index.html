@@ -503,6 +503,11 @@
     .itop button.chat-tab.on { color: #d1fe17; border-bottom-color: #d1fe17; }
     @keyframes chat-glow { 50% { text-shadow: 0 0 16px rgba(209,254,23,.95); } }
     .ibody.chat-slot { padding: 0; }
+    .app.side-panel > header, .app.side-panel > div:nth-child(2) { grid-column: 1 / -1; }
+    .app.side-panel > main { grid-column: 1; grid-row: 3; }
+    .app.side-panel > .timeline { grid-column: 1; grid-row: 4; }
+    .app.side-panel > .col-resize { grid-column: 2; grid-row: 3 / 5; }
+    .app.side-panel > .inspector { grid-column: 3; grid-row: 3 / 5; min-height: 0; }
     .itop-note { margin-left: auto; color: var(--muted); font-size: 11px; max-width: 35%; }
     .ibody { overflow: auto; padding: 10px 12px; min-height: 0; }
     .seg-ctl { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; background: var(--bg); border-radius: 6px; padding: 3px; margin-bottom: 8px; }

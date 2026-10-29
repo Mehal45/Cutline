@@ -36,10 +36,10 @@ import { loadTextPresets, addDefaultText } from "./presets.js";
 import {
   saveProject, openProject, newProject, relink, startAutosave, checkRecovery, restoreRecovery, loadProject, desktop, projectName, openFromDisk, openLastProject,
 } from "./project-io.js";
-import { announceReady, sendExport } from "./embed.js";
+import { announceReady, embedded, sendExport } from "./embed.js";
 
 const additiveKey = (e) => e.shiftKey || e.ctrlKey || e.metaKey;
-setState({ snap: true, ...(() => { try { return JSON.parse(localStorage.getItem("cutline.timelineToggles") || "{}"); } catch { return {}; } })(), timelineH: Math.max(260, Math.min(460, Math.round(window.innerHeight * 0.38))), previewQuality: (() => { try { return +localStorage.getItem("cutline.previewQuality") || 1; } catch { return 1; } })(),
+setState({ snap: true, ...(() => { try { return JSON.parse(localStorage.getItem("cutline.timelineToggles") || "{}"); } catch { return {}; } })(), timelineH: embedded ? Math.max(190, Math.round(window.innerHeight * 0.27)) : Math.max(260, Math.min(460, Math.round(window.innerHeight * 0.38))), previewQuality: (() => { try { return +localStorage.getItem("cutline.previewQuality") || 1; } catch { return 1; } })(),
   rememberText: (() => { try { return !!localStorage.getItem("cutline.rememberText"); } catch { return false; } })(),
   previewFps: (() => { try { return +localStorage.getItem("cutline.previewFps") || 60; } catch { return 60; } })() });
 
@@ -1063,18 +1063,20 @@ function App() {
     return () => window.removeEventListener("wheel", noPageZoom);
   }, []);
   const cols = useColumns();
-  return html`<div class="app" style=${{ gridTemplateRows: home ? "38px auto minmax(0, 1fr)" : `38px auto minmax(0, 1fr) ${timelineH}px` }}>
+  // Inside Flodit the right panel (its Chat tab first) runs the full height beside a shorter timeline (founder, Oct 29).
+  const side = embedded && !home;
+  return html`<div class=${side ? "app side-panel" : "app"} style=${{ gridTemplateRows: home ? "38px auto minmax(0, 1fr)" : `38px auto minmax(0, 1fr) ${timelineH}px`, ...(side ? { gridTemplateColumns: `minmax(0, 1fr) 6px ${cols.right}px` } : {}) }}>
     <${Header} onExport=${() => setDialog("export")} onShortcuts=${() => setDialog("shortcuts")} />
     <div><${RecoveryBar} />${!home && html`<${RelinkBar} />`}</div>
     ${home ? html`<${Home} />` : html`
-    <main style=${{ gridTemplateColumns: `${cols.left}px 6px minmax(0, 1fr) 6px ${cols.right}px`, gap: 0 }}>
+    <main style=${{ gridTemplateColumns: side ? `${cols.left}px 6px minmax(0, 1fr)` : `${cols.left}px 6px minmax(0, 1fr) 6px ${cols.right}px`, gap: 0 }}>
       <${LeftPanel} />
       <${ColResize} side="left" />
       <${Player} />
-      <${ColResize} side="right" />
-      <${Inspector} />
+      ${!side && html`<${ColResize} side="right" /><${Inspector} />`}
     </main>
-    <${Timeline} />`}
+    <${Timeline} />
+    ${side && html`<${ColResize} side="right" /><${Inspector} />`}`}
     <${UpdateBar} />
     <${Toast} />
     <input id="import-any" type="file" multiple accept="video/*,image/*,audio/*" hidden
