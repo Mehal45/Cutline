@@ -64,6 +64,21 @@ if (embedded) {
       } else if (m.type === "cutline:get") {
         const { time, selection } = getState();
         post({ type: "cutline:project", id: m.id, project: plainProject(), time, selection: selection.map(({ kind, id }) => ({ kind, id })) });
+      } else if (m.type === "cutline:files") {
+        // Which file each video in the project is, so Flodit can clean up its voice.
+        const media = Object.values(getState().project.media).filter((x) => x.kind === "video" && x.file);
+        post({ type: "cutline:files", id: m.id, files: media.map((x) => ({ mediaId: x.id, name: x.name, file: x.file, duration: x.duration })) });
+      } else if (m.type === "cutline:replace-media") {
+        // A new version of a file (the voice cleaned up): every clip using it stays where it is.
+        const blob = await (await fetch(m.src)).blob();
+        const p = getState().project;
+        const old = p.media[m.mediaId];
+        if (old) {
+          const file = new File([blob], old.name, { type: blob.type || "video/mp4" });
+          setState({ project: { ...p, media: { ...p.media, [old.id]: { ...old, file, url: URL.createObjectURL(file) } } } });
+          if (m.note) toast(m.note, 3000);
+        }
+        post({ type: "cutline:replaced", id: m.id });
       } else if (m.type === "cutline:apply") {
         if (Object.keys(m.lists || {}).length) applyLists(m.lists);
         if (m.note) toast(m.note, 3000);
