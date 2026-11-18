@@ -15,8 +15,8 @@
     "dist:mac": "electron-builder --mac --publish never"
   },
   "devDependencies": {
-    "electron": "44.9.0",
-    "electron-builder": "26.15.3"
+    "electron": "^45.3.4",
+    "electron-builder": "^26.18.0"
   },
   "build": {
     "appId": "io.github.mehal45.cutline",
