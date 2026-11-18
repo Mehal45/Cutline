@@ -278,7 +278,8 @@ async function createWindow() {
   });
   win.once("ready-to-show", () => win.show());
   handleDownloads(win);
-  win.webContents.setVisualZoomLevelLimits(1, 1); // no pinch-zoom of the whole window
+  // No pinch-zoom of the whole window. Electron 45+ rejects this before the page exists, so set it on each load.
+  win.webContents.on("did-finish-load", () => win.webContents.setVisualZoomLevelLimits(1, 1).catch(() => {}));
   // With no menu on Windows/Linux, keep the developer tools reachable with Ctrl+Shift+I / F12.
   win.webContents.on("before-input-event", (e, input) => {
     if (input.type === "keyDown" && (input.key === "F12" || (input.control && input.shift && input.key.toLowerCase() === "i"))) win.webContents.toggleDevTools();

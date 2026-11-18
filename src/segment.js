@@ -2,7 +2,7 @@
 // its mask becomes the clip's alpha. The model (~250 KB) and runtime load from the web on first use.
 import { setState } from "./store.js";
 
-const VISION = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+const VISION = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.2.3";
 const MODEL = "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite";
 
 let status = "idle"; // idle | loading | ready | failed

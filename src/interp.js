@@ -98,8 +98,18 @@ void main() {
     vec3 ca = texture(A, uv - a * d).rgb, cb = texture(B, uv + (1.0 - a) * d).rgb;
     vec3 c = mix(ca, cb, a);
     if (useFlow) {
-      float e = abs(L(ca) - L(cb));
-      c = mix(c, mix(texture(A, uv).rgb, texture(B, uv).rgb, a), smoothstep(0.12, 0.32, e));
+      vec3 sa = texture(A, uv).rgb, sb = texture(B, uv).rgb;
+      vec3 still = mix(sa, sb, a);
+      float e = abs(L(ca) - L(cb));    // how well the moved picture matches between the two frames
+      float es = abs(L(sa) - L(sb));   // how well "nothing moved here" matches
+      vec3 dd = abs(sa - sb);
+      float same = max(dd.r, max(dd.g, dd.b));   // 0 = this pixel is identical in both real frames
+      // Things that don't move (game HUD, hotbar, on-screen text, overlays) stay exactly in place: the motion
+      // search works in blocks and smooths, so motion from the world behind would otherwise drag and tear them.
+      // A pixel that is the same in both real frames keeps that colour; elsewhere use whichever matches better.
+      c = mix(c, still, max(smoothstep(0.0, 0.04, e - es), 1.0 - smoothstep(0.015, 0.05, same)));
+      // Neither matches (things appearing or disappearing): a soft cross-fade instead of tearing.
+      c = mix(c, still, smoothstep(0.12, 0.32, min(e, es)));
     }
     acc += c;
   }

@@ -1,6 +1,6 @@
 // Runs Whisper in a worker so the UI stays responsive.
 // In: { audio: Float32Array (16 kHz mono), model, language }  Out: progress / result / error messages.
-import { pipeline, env } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1";
+import { pipeline, env } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2";
 
 env.allowLocalModels = false;
 const pipes = new Map();

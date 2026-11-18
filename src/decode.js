@@ -1,7 +1,7 @@
 // Fast sequential frame access for export: demux MP4/MOV (mp4box) or MKV/WebM (below), decode with WebCodecs.
 // Each export segment gets its own decoder that only moves forward in time, so every frame
 // is decoded once instead of seeking a <video> element per frame.
-import { createFile, DataStream } from "mp4box";
+import { createFile, DataStream, Endianness } from "mp4box";
 import { byteSource, indexMatroska, mkvSamples, indexMp4, mp4Samples, loadData, dropData } from "./bigfile.js";
 
 const demuxCache = new Map(); // mediaId -> Promise<{config, samples} | null>
@@ -193,7 +193,7 @@ function codecDescription(trak) {
   for (const entry of trak.mdia.minf.stbl.stsd.entries) {
     const box = entry.avcC || entry.hvcC || entry.vpcC || entry.av1C;
     if (box) {
-      const stream = new DataStream(undefined, 0, DataStream.BIG_ENDIAN);
+      const stream = new DataStream(undefined, 0, Endianness.BIG_ENDIAN);
       box.write(stream);
       return new Uint8Array(stream.buffer, 8); // skip the box header
     }
