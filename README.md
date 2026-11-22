@@ -141,6 +141,26 @@ Press **?** in the app for the full list. On a Mac, use ⌘ where it says Ctrl.
 | Ctrl+I · Ctrl+E | Import media · export |
 | Ctrl+S · Ctrl+Shift+S · Ctrl+O · Ctrl+W · Ctrl+Q | Save · save as · open · close project · quit |
 
+## Headless export and the Cutline MCP
+
+Cutline can export without opening a window, so scripts and AI assistants can make videos:
+
+```
+Cutline --export project.cutline --out video.mp4 --opts '{"fps":60,"res":1080,"quality":"max"}'
+Cutline --export project.cutline --out frame.png --opts '{"frame":12.5}'
+```
+
+It prints `PROGRESS 0.42` lines, then `DONE <path>` or `ERROR <message>`, and runs beside an open Cutline window
+(it uses its own settings folder). On macOS the program is `/Applications/Cutline.app/Contents/MacOS/Cutline`.
+
+`mcp/` is an MCP server (Model Context Protocol) built on this: an assistant can create and edit projects
+(clips, texts, audio, keyframes, backgrounds, zooms inside a framed clip), look at any frame and export, then open
+the result in Cutline for you to change by hand. Install with `cd mcp && npm install`, then add it to your
+assistant, e.g. `claude mcp add cutline -- node /path/to/cutline/mcp/server.mjs`.
+
+Project fields added in 1.25: `tiltX` / `tiltY` / `perspective` (3D tilt, keyframeable), `shadow`, `border` on clips;
+`behind: true` on texts (sits behind the person); `backgrounds: [{ start, dur, type: "glow"|"gradient", colors }]`.
+
 ## Files
 
 | File | What it does |

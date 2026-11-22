@@ -52,6 +52,9 @@ function frameKey(el) {
  * Returns a canvas of the source frame with the background made transparent, or null while the model
  * is loading (the clip then draws normally). item.cutout = { mode: "person", invert?, feather? }.
  */
+/** Whether the person model is loaded (until then cutouts draw the whole picture). */
+export const cutoutReady = () => status === "ready";
+
 export function cutoutFrame(item, el, sw, sh) {
   if (status !== "ready") { if (status === "idle") loadCutout(); return null; }
   const key = frameKey(el) + ":" + sw + "x" + sh + ":" + (item.cutout.invert ? 1 : 0) + ":" + (item.cutout.feather ?? 2);

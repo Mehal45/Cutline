@@ -42,9 +42,10 @@ setState({ snap: true, ...(() => { try { return JSON.parse(localStorage.getItem(
   rememberText: (() => { try { return !!localStorage.getItem("cutline.rememberText"); } catch { return false; } })(),
   previewFps: (() => { try { return +localStorage.getItem("cutline.previewFps") || 60; } catch { return 60; } })() });
 
-startProxies();
+const HEADLESS = !!(typeof window !== "undefined" && window.cutlineDesktop?.headless && new URLSearchParams(location.search).has("headless"));
+if (!HEADLESS) startProxies(); // preview proxies only matter in the editor
 loadSettings();
-startUpdateChecks();
+if (!HEADLESS) startUpdateChecks();
 import("./decode.js").then((d) => d.startScans(getState, setState));
 
 /** Smooth-preview toggle with the background progress. */
@@ -1083,4 +1084,39 @@ function App() {
   </div>`;
 }
 
-createRoot(document.getElementById("root")).render(html`<${App} />`);
+/** Headless export (desktop `Cutline --export`): no editor, just open the project and write the video. */
+async function runHeadless() {
+  const h = desktop.headless;
+  const job = await h.job();
+  try {
+    await loadSettings();
+    const missing = await loadProject(job.text, null);
+    if (missing.length) throw new Error("Missing media: " + missing.map((m) => m.path || m.name).join(", "));
+    const p = rootProject();
+    await loadProjectFonts(p);
+    const { res, ...opts } = job.opts || {};
+    if (res && !opts.width) { // e.g. res: 1080 -> the project's aspect at that short side
+      const k = res / Math.min(p.width, p.height);
+      opts.width = Math.round(p.width * k / 2) * 2; opts.height = Math.round(p.height * k / 2) * 2;
+    }
+    if (opts.frame != null) { // one still frame (PNG) at opts.frame seconds
+      if ([...p.main, ...(p.overlays || [])].some((x) => x.cutout?.mode) || p.texts.some((x) => x.behind)) {
+        if (!(await (await import("./segment.js")).loadCutout())) throw new Error("Background removal couldn't load (check your internet connection).");
+      }
+      const png = new Uint8Array(await (await exportFrame(p, +opts.frame)).arrayBuffer());
+      await desktop.exportWrite(job.exportId, png, 0);
+      await desktop.exportEnd(job.exportId);
+      h.progress(1); h.done(null); return;
+    }
+    opts.sink = { write: (d, pos) => desktop.exportWrite(job.exportId, d, pos), close: () => desktop.exportEnd(job.exportId) };
+    if (opts.encoder === "software") opts.software = true;
+    await exportMp4(p, (x) => h.progress(x), null, opts);
+    h.done(null);
+  } catch (e) {
+    await desktop.exportEnd(job.exportId, true).catch(() => {});
+    h.done(String(e?.stack || e?.message || e));
+  }
+}
+
+if (HEADLESS) runHeadless();
+else createRoot(document.getElementById("root")).render(html`<${App} />`);

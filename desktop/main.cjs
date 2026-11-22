@@ -8,7 +8,19 @@ const crypto = require("node:crypto");
 const { Readable } = require("node:stream");
 const { setupUpdates } = require("./updater.cjs");
 
-setupUpdates({ repo: "Mehal45/Cutline", assets: { win32: /^Cutline-Setup-.*\.exe$/i, darwin: /\.dmg$/i } });
+// Headless export (no window, for scripts / the Cutline MCP):
+//   Cutline --export <project.cutline> --out <video.mp4> [--opts '{"fps":60,"quality":"max",...}']  (opts.frame = seconds -> one PNG)
+// Prints "PROGRESS 0.42" lines, then "DONE <path>" (exit 0) or "ERROR <message>" (exit 1). Runs beside an open
+// Cutline window: it uses its own settings folder, so it never touches the user's autosave, recents or prefs.
+const argVal = (name) => { const i = process.argv.indexOf(name); return i > 0 ? process.argv[i + 1] : undefined; };
+const headless = process.argv.includes("--export") ? {
+  project: path.resolve(argVal("--export") || ""), out: path.resolve(argVal("--out") || ""), opts: (() => {
+    try { return JSON.parse(argVal("--opts") || "{}"); } catch { return null; }
+  })(),
+} : null;
+const guiUserData = app.getPath("userData");
+if (headless) app.setPath("userData", guiUserData + "-headless");
+if (!headless) setupUpdates({ repo: "Mehal45/Cutline", assets: { win32: /^Cutline-Setup-.*\.exe$/i, darwin: /\.dmg$/i } });
 
 const root = path.join(__dirname, "..");
 const token = crypto.randomBytes(16).toString("hex"); // guards /local-file against other pages on this PC
@@ -309,7 +321,7 @@ async function createWindow() {
 }
 
 // Settings › Performance: graphics acceleration can be turned off (read before the app starts).
-try { if (JSON.parse(fs.readFileSync(prefsPath(), "utf8"))?.settings?.gpu === false) app.disableHardwareAcceleration(); } catch { /* no prefs yet */ }
+try { if (JSON.parse(fs.readFileSync(path.join(guiUserData, "prefs.json"), "utf8"))?.settings?.gpu === false) app.disableHardwareAcceleration(); } catch { /* no prefs yet */ }
 
 /** The user's settings from prefs.json (Menu › Settings). */
 async function userSettings() {
@@ -382,8 +394,45 @@ function handleDownloads(w) {
   });
 }
 
-// One window only: opening Cutline again focuses the existing one.
-if (!app.requestSingleInstanceLock()) app.quit();
+// ---------------- headless export ----------------
+async function runHeadless() {
+  const say = (line) => process.stdout.write(line + "\n");
+  const fail = (msg) => { say("ERROR " + String(msg).split("\n")[0]); if (msg && String(msg).includes("\n")) process.stderr.write(String(msg) + "\n"); app.exit(1); };
+  if (!headless.opts) return fail("--opts is not valid JSON");
+  if (!fs.existsSync(headless.project)) return fail("project not found: " + headless.project);
+  if (!argVal("--out")) return fail("--out <video.mp4> is required");
+  await fs.promises.mkdir(path.dirname(headless.out), { recursive: true });
+  const part = headless.out + ".part";
+  const id = crypto.randomUUID();
+  openExports.set(id, { fh: await fs.promises.open(part, "w"), path: part });
+  const text = await fs.promises.readFile(headless.project, "utf8");
+  let lastPct = -1;
+  ipcMain.handle("cutline:headless-job", () => ({ text, path: headless.project, exportId: id, opts: headless.opts }));
+  ipcMain.on("cutline:headless-progress", (_e, p) => {
+    const pct = Math.floor(p * 100);
+    if (pct !== lastPct) { lastPct = pct; say(`PROGRESS ${p.toFixed(3)}`); }
+  });
+  ipcMain.on("cutline:headless-log", (_e, m) => process.stderr.write(String(m) + "\n"));
+  ipcMain.on("cutline:headless-done", async (_e, err) => {
+    if (err) { await fs.promises.rm(part, { force: true }).catch(() => {}); return fail(err); }
+    await fs.promises.rename(part, headless.out);
+    say("DONE " + headless.out);
+    app.exit(0);
+  });
+  const port = await startServer();
+  win = new BrowserWindow({
+    width: 1280, height: 800, show: false,
+    webPreferences: { contextIsolation: true, sandbox: true, backgroundThrottling: false, preload: path.join(__dirname, "preload.cjs") },
+  });
+  win.webContents.on("render-process-gone", (_e, d) => fail("renderer stopped: " + d.reason));
+  win.webContents.on("console-message", (e) => { if (e.level === "error") process.stderr.write("[page] " + e.message + "\n"); });
+  await win.loadURL(`http://127.0.0.1:${port}/?headless=1`);
+}
+
+if (headless) {
+  app.whenReady().then(() => { protocol.handle("cutline-file", serveMedia); runHeadless().catch((e) => { process.stdout.write("ERROR " + e.message + "\n"); app.exit(1); }); });
+  app.on("window-all-closed", () => {});
+} else if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on("second-instance", (_e, argv) => {
     if (win) { if (win.isMinimized()) win.restore(); win.focus(); }

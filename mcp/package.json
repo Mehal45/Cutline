@@ -1,0 +1,13 @@
+{
+  "name": "cutline-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for Cutline: build and edit .cutline projects, render frames and export videos without the GUI.",
+  "type": "module",
+  "main": "server.mjs",
+  "bin": { "cutline-mcp": "server.mjs" },
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.20.0",
+    "zod": "^3.25.0"
+  }
+}

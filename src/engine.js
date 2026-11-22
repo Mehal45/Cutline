@@ -5,7 +5,8 @@ import { layoutMain, getState } from "./store.js";
 import { proxySrc } from "./proxy.js";
 import { valueAt, propAt } from "./keyframes.js";
 import { applyFx, hasFx, ADJUST } from "./fx.js";
-import { cutoutFrame } from "./segment.js";
+import { cutoutFrame, cutoutReady } from "./segment.js";
+import { tiltLayer } from "./tilt.js";
 import { needsLiveRoute, routeLive, isRouted } from "./audiofx.js";
 import { levelFor } from "./media-audio.js";
 import { meanSpeed, sourceAt, rateAt } from "./speed.js";
@@ -374,7 +375,10 @@ function drawVisual(ctx, project, item, lt, W, H) {
   const fit = Math.min(W / sw, H / sh);
   const fx = fxSettingsAt(item, lt);
   const src = (item.cutout?.mode && cutoutFrame(item, el, sw, sh)) || el;
-  const target = fx ? layer(W, H) : ctx;
+  // 3D tilt (degrees, keyframeable): the item is drawn flat on its own layer, then tilted on the GPU.
+  const tiltX = valueAt(item, "tiltX", lt, item.tiltX || 0), tiltY = valueAt(item, "tiltY", lt, item.tiltY || 0);
+  const tilted = Math.abs(tiltX) > 0.01 || Math.abs(tiltY) > 0.01;
+  const target = fx || tilted ? layer(W, H) : ctx;
   const place = (c) => {
     c.translate(tr.x * W + a.dx * W, tr.y * H + a.dy * H);
     c.rotate((tr.rotation * Math.PI) / 180);
@@ -402,16 +406,46 @@ function drawVisual(ctx, project, item, lt, W, H) {
     masked.restore();
     masked.filter = "none"; masked.globalCompositeOperation = "source-over";
   }
+  // The item's outline (mask shape, else the cropped picture) for its drop shadow and border.
+  const outline = (c) => {
+    c.beginPath();
+    if (mask) maskPath(c, mask, sw * fit, sh * fit);
+    else c.rect((-sw * fit) / 2 + sx * fit, (-sh * fit) / 2 + sy * fit, cw * fit, ch * fit);
+  };
+  const k = Math.abs(a.scale * tr.scale) || 1;
+  if (target !== ctx) { target.save(); target.setTransform(1, 0, 0, 1, 0, 0); target.clearRect(0, 0, W, H); target.restore(); }
+  if (item.shadow && (item.shadow.opacity ?? 0.6) > 0) { // drop shadow: { blur, x, y, color, opacity } in 1080p pixels
+    const sc = H / 1080, s = item.shadow;
+    target.save();
+    target.globalAlpha = (fx || tilted ? 1 : a.alpha * tr.opacity) * (s.opacity ?? 0.6);
+    place(target);
+    target.shadowColor = s.color || "#000";
+    target.shadowBlur = (s.blur ?? 60) * sc;
+    target.shadowOffsetX = (s.x ?? 0) * sc; target.shadowOffsetY = (s.y ?? 30) * sc;
+    target.fillStyle = "#000";
+    outline(target); target.fill();
+    target.restore();
+  }
   target.save();
-  if (!fx) {
+  if (!fx && !tilted) {
     target.globalAlpha = a.alpha * tr.opacity;
     if (item.blend && item.blend !== "normal") target.globalCompositeOperation = BLEND_MODES[item.blend]?.[1] || "source-over";
   }
   if (masked) target.drawImage(masked.canvas, 0, 0);
   else { place(target); draw(target); }
   target.restore();
-  if (fx) {
-    const out = applyFx(target.canvas, fx, lt, W, H);
+  if (item.border?.width > 0) { // border: { width (1080p px), color }
+    target.save();
+    if (!fx && !tilted) target.globalAlpha = a.alpha * tr.opacity;
+    place(target);
+    target.lineWidth = (item.border.width * H / 1080) / k;
+    target.strokeStyle = item.border.color || "rgba(255,255,255,.15)";
+    outline(target); target.stroke();
+    target.restore();
+  }
+  if (fx || tilted) {
+    let out = fx ? applyFx(target.canvas, fx, lt, W, H) : target.canvas;
+    if (tilted) out = tiltLayer(out, W, H, tiltX, tiltY, tr.x * W + a.dx * W, tr.y * H + a.dy * H, (item.perspective ?? 2400) * H / 1080) || out;
     ctx.save();
     ctx.globalAlpha = a.alpha * tr.opacity;
     if (item.blend && item.blend !== "normal") ctx.globalCompositeOperation = BLEND_MODES[item.blend]?.[1] || "source-over";
@@ -803,6 +837,7 @@ export function drawFrame(ctx, project, t, opts = {}) {
   if (!opts.nested || project.main.length) {
     ctx.fillStyle = "#000";
     ctx.fillRect(0, 0, W, H);
+    drawBackgrounds(ctx, project, t, W, H);
   }
   const { clips, transition } = activeClips(project, t);
   const hidden = (key) => !!project.trackState?.[key]?.hidden;
@@ -812,6 +847,7 @@ export function drawFrame(ctx, project, t, opts = {}) {
     A.clearRect(0, 0, W, H); B.clearRect(0, 0, W, H);
     A.fillStyle = B.fillStyle = "#000";
     A.fillRect(0, 0, W, H); B.fillRect(0, 0, W, H);
+    drawBackgrounds(A, project, t, W, H); drawBackgrounds(B, project, t, W, H);
     drawClip(A, project, transition.a, W, H);
     drawClip(B, project, transition.b, W, H);
     ctx.drawImage(renderTransition(transition.type, A.canvas, B.canvas, transition.p, W, H), 0, 0);
@@ -831,8 +867,57 @@ export function drawFrame(ctx, project, t, opts = {}) {
     ctx.restore();
   }
   // Texts on higher text tracks draw on top (like the timeline rows).
-  if (!hidden("text")) for (const item of [...project.texts].sort((a, b) => (a.track ?? 0) - (b.track ?? 0))) drawText(ctx, item, t, W, H);
+  const texts = hidden("text") ? [] : [...project.texts].sort((a, b) => (a.track ?? 0) - (b.track ?? 0));
+  // "Behind the person" texts (text.behind): drawn over the picture, then the person (cut out of the main clip)
+  // is drawn again on top, so the words sit between the background and the speaker.
+  const canBehind = !transition && clips[0] && !hidden("main") && cutoutReady(); // model not loaded yet: texts simply draw on top
+  const behind = canBehind ? texts.filter((x) => x.behind && t >= x.start && t < x.start + x.dur) : [];
+  if (behind.length) {
+    for (const item of behind) drawText(ctx, item, t, W, H);
+    const seg = clips[0].seg;
+    drawVisual(ctx, project, { ...seg, cutout: { mode: "person", feather: seg.cutout?.feather ?? 2 }, shadow: null, border: null }, clips[0].local, W, H);
+  }
+  for (const item of texts) if (!behind.includes(item)) drawText(ctx, item, t, W, H);
 }
+
+/**
+ * Animated backgrounds behind everything (project.backgrounds: [{ start, dur, type, colors, speed, intensity, angle, base }]):
+ *  "gradient" — a linear gradient (angle in degrees) between colors, slowly turning when speed > 0
+ *  "glow"     — a dark base with soft coloured lights drifting around (colors = the lights), like a subtle light leak
+ */
+export function drawBackgrounds(ctx, project, t, W, H) {
+  for (const b of project.backgrounds || []) {
+    if (t < b.start || t >= b.start + b.dur) continue;
+    const cols = b.colors?.length ? b.colors : ["#000000", "#3a0a0c"];
+    const sp = b.speed ?? 1, k = b.intensity ?? 1;
+    ctx.save();
+    if (b.type === "glow") {
+      ctx.fillStyle = b.base || "#050404";
+      ctx.fillRect(0, 0, W, H);
+      ctx.globalCompositeOperation = "lighter";
+      cols.forEach((c, i) => {
+        const ph = i * 2.1 + 0.7, per = 17 + i * 6;
+        const x = W * (0.5 + 0.38 * Math.sin((t * sp * 2 * Math.PI) / per + ph));
+        const y = H * (0.5 + 0.32 * Math.cos((t * sp * 2 * Math.PI) / (per * 1.3) + ph * 1.7));
+        const r = Math.max(W, H) * (0.55 + 0.1 * Math.sin(t * sp * 0.3 + i));
+        const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+        g.addColorStop(0, withAlpha(c, 0.42 * k)); g.addColorStop(1, withAlpha(c, 0));
+        ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+      });
+    } else {
+      const ang = (((b.angle ?? 135) + t * sp * 6) * Math.PI) / 180, R = Math.hypot(W, H) / 2;
+      const g = ctx.createLinearGradient(W / 2 - Math.cos(ang) * R, H / 2 - Math.sin(ang) * R, W / 2 + Math.cos(ang) * R, H / 2 + Math.sin(ang) * R);
+      cols.forEach((c, i) => g.addColorStop(cols.length > 1 ? i / (cols.length - 1) : 0, c));
+      ctx.globalAlpha = Math.min(1, k);
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    }
+    ctx.restore();
+  }
+}
+const withAlpha = (hex, a) => {
+  const h = String(hex).replace("#", ""), n = parseInt(h.length === 3 ? h.split("").map((c) => c + c).join("") : h.slice(0, 6), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${Math.max(0, Math.min(1, a)).toFixed(3)})`;
+};
 
 /** Items of a lane (overlays, audio, effects) visible at t, with local and source time. */
 export function activeTimed(list, t) {

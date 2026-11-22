@@ -251,7 +251,7 @@ async function exportOnce(project, onProgress, signal, opts = {}) {
     if (codec === "avc") throw new Error("This browser cannot encode H.264 video. Try Chrome or Edge.");
     throw new Error(`This computer can't encode ${VIDEO_CODECS[codec].label.split(" (")[0]} at ${width}×${height}. Pick H.264 or a smaller size.`);
   }
-  const usesCutout = [...project.main, ...(project.overlays || [])].some((x) => x.cutout?.mode);
+  const usesCutout = [...project.main, ...(project.overlays || [])].some((x) => x.cutout?.mode) || (project.texts || []).some((x) => x.behind);
   if (usesCutout && !(await loadCutout())) throw new Error("Background removal couldn't load (check your internet connection).");
   const audio = await pickAudioCodec(48000, 2);
   // Desktop: the file is written to disk as it's made (opts.sink), so long or high-bitrate videos never have

@@ -1,6 +1,6 @@
 // Right-hand inspector: properties of whatever is selected.
 import React, { useState, useRef, useEffect } from "react";
-import { useStore, usePanelTime, edit, editLive, checkpoint, findItem, getState, setState } from "../store.js";
+import { useStore, usePanelTime, edit, editLive, checkpoint, findItem, getState, setState, projectDuration } from "../store.js";
 import { clipSpeed, clipTransform, BLEND_MODES, ANIMATIONS, TRANSITIONS, itemBounds } from "../engine.js";
 import {
   deleteSelection, rippleDelete, copySelection, duplicateSelection, setClipSpeed, SPEED_PRESETS, freezeFrame,
@@ -197,6 +197,34 @@ function BlendSection({ kind, item }) {
         ${Object.entries(BLEND_MODES).map(([k, [l]]) => html`<option value=${k}>${l}</option>`)}
       </select>
     </div>
+  <//>`;
+}
+
+/** 3D tilt (keyframeable), drop shadow and border — e.g. a screen recording as a floating, tilted card. */
+function DepthSection({ kind, item }) {
+  const set = liveSet(kind, item.id);
+  const sh = item.shadow, bd = item.border;
+  const px = (v) => `${Math.round(v)}px`;
+  const tilted = item.tiltX || item.tiltY || item.keyframes?.tiltX || item.keyframes?.tiltY;
+  return html`<${Section} title="3D tilt, shadow & border" open=${!!(tilted || sh || bd)}>
+    <${KSlider} kind=${kind} id=${item.id} path="tiltX" label="Tilt fwd" min=${-60} max=${60} step=${0.5} fallback=${0} format=${deg} />
+    <${KSlider} kind=${kind} id=${item.id} path="tiltY" label="Turn" min=${-60} max=${60} step=${0.5} fallback=${0} format=${deg} />
+    <${Slider} label="Depth (perspective)" value=${item.perspective ?? 2400} min=${600} max=${6000} step=${50} format=${px}
+      onChange=${(v, live) => set((x) => (x.perspective = v), live)} />
+    <label class="check"><input type="checkbox" checked=${!!sh}
+      onChange=${(e) => set((x) => (e.target.checked ? (x.shadow = { blur: 80, x: 0, y: 36, opacity: 0.7, color: "#000000" }) : delete x.shadow))} /> Drop shadow</label>
+    ${sh && html`<div>
+      <${Slider} label="Blur" value=${sh.blur ?? 80} min=${0} max=${300} step=${1} format=${px} onChange=${(v, live) => set((x) => (x.shadow.blur = v), live)} />
+      <${Slider} label="Opacity" value=${sh.opacity ?? 0.7} min=${0} max=${1} step=${0.01} format=${pct} onChange=${(v, live) => set((x) => (x.shadow.opacity = v), live)} />
+      <${Slider} label="Down" value=${sh.y ?? 36} min=${-200} max=${200} step=${1} format=${px} onChange=${(v, live) => set((x) => (x.shadow.y = v), live)} />
+      <${Slider} label="Right" value=${sh.x ?? 0} min=${-200} max=${200} step=${1} format=${px} onChange=${(v, live) => set((x) => (x.shadow.x = v), live)} />
+    </div>
+    <div class="krow"><span class="klabel">Colour</span><input type="color" value=${sh.color || "#000000"} onChange=${(e) => set((x) => (x.shadow.color = e.target.value))} /></div>`}
+    <label class="check"><input type="checkbox" checked=${!!bd}
+      onChange=${(e) => set((x) => (e.target.checked ? (x.border = { width: 2, color: "#ffffff" }) : delete x.border))} /> Border</label>
+    ${bd && html`<${Slider} label="Width" value=${bd.width ?? 2} min=${0.5} max=${30} step=${0.5} format=${px} onChange=${(v, live) => set((x) => (x.border.width = v), live)} />
+    <div class="krow"><span class="klabel">Colour</span><input type="color" value=${/^#/.test(bd.color || "") ? bd.color : "#ffffff"} onChange=${(e) => set((x) => (x.border.color = e.target.value))} /></div>`}
+    <p class="muted">Tip: a Mask with rounded corners makes the shadow and border follow the rounded shape.</p>
   <//>`;
 }
 
@@ -415,6 +443,7 @@ function VisualInspector({ kind, item, project }) {
       ${sub === "basic" && html`
         <${TransformSection} kind=${kind} id=${item.id} />
         <${BlendSection} kind=${kind} item=${item} />
+        <${DepthSection} kind=${kind} item=${item} />
         <${LookSection} kind=${kind} item=${item} />
         <${SourceSection} kind=${kind} item=${item} media=${media} />
         <div class="action-row">
@@ -679,6 +708,8 @@ function TextInspectorBody({ t }) {
       <${LineBreaks} t=${t} />
       <${TextFontFields} st=${st} setSt=${setSt} />
       <${TextSoundSection} t=${t} />
+      <label class="check" title="The words sit behind the person in the main clip (uses Remove background)"><input type="checkbox" checked=${!!t.behind}
+        onChange=${(e) => set((x) => (e.target.checked ? (x.behind = true) : delete x.behind))} /> Behind the person</label>
       <${TransformSection} kind="text" id=${t.id} />
       <${Section} title="Opacity">
         <${KSlider} kind="text" id=${t.id} path="opacity" label="Opacity" min=${0} max=${1} fallback=${1} format=${pct} />
@@ -821,6 +852,39 @@ export function Inspector() {
         ${[24, 25, 30, 50, 60].map((f) => html`<option value=${f}>${f} fps</option>`)}
       </select>
     <//>
+    <${BackgroundsField} project=${project} />
     <p class="muted">Click something in the preview or timeline to edit it. Drag across empty timeline space to select several items.</p>
+  <//>`;
+}
+
+/** Animated backgrounds behind everything (seen where clips don't cover the frame, e.g. a scaled-down screen recording). */
+function BackgroundsField({ project }) {
+  const bgs = project.backgrounds || [];
+  const upd = (i, fn) => edit((p) => { p.backgrounds = (p.backgrounds || []).map((b, k) => (k === i ? { ...b } : b)); fn(p.backgrounds[i]); });
+  const add = () => edit((p) => {
+    p.backgrounds = [...(p.backgrounds || []), { id: Math.random().toString(36).slice(2, 10), start: 0, dur: Math.max(1, projectDuration(p)),
+      type: "glow", colors: ["#96121a", "#780a1e", "#be2a1e"], base: "#050404", intensity: 0.9, speed: 1 }];
+  });
+  return html`<${Field} label="Background">
+    ${bgs.map((b, i) => html`<div class="bgcard" key=${b.id || i}>
+      <div class="grid2">
+        <select value=${b.type} onChange=${(e) => upd(i, (x) => (x.type = e.target.value))}>
+          <option value="glow">Moving glow</option><option value="gradient">Gradient</option>
+        </select>
+        <button class="mini danger" onClick=${() => edit((p) => (p.backgrounds = p.backgrounds.filter((_, k) => k !== i)))}>Remove</button>
+      </div>
+      <div class="row">${(b.colors || []).map((c, k) => html`<input type="color" key=${k} value=${c}
+        onChange=${(e) => upd(i, (x) => { x.colors = [...x.colors]; x.colors[k] = e.target.value; })} />`)}
+        ${(b.colors || []).length < 5 && html`<button class="mini" title="Add a colour" onClick=${() => upd(i, (x) => (x.colors = [...(x.colors || []), "#3a0a0c"]))}>+</button>`}
+        ${(b.colors || []).length > 1 && html`<button class="mini" title="Remove the last colour" onClick=${() => upd(i, (x) => (x.colors = x.colors.slice(0, -1)))}>−</button>`}
+      </div>
+      <${Slider} label="Strength" value=${b.intensity ?? 1} min=${0} max=${2} step=${0.05} format=${(v) => `${Math.round(v * 100)}%`} onChange=${(v) => upd(i, (x) => (x.intensity = v))} />
+      <${Slider} label="Movement" value=${b.speed ?? 1} min=${0} max=${4} step=${0.05} format=${(v) => `${v.toFixed(2)}×`} onChange=${(v) => upd(i, (x) => (x.speed = v))} />
+      <div>
+        <${Slider} label="From" value=${b.start || 0} min=${0} max=${Math.max(1, projectDuration(project))} step=${0.1} format=${secs} onChange=${(v) => upd(i, (x) => (x.start = v))} />
+        <${Slider} label="Length" value=${b.dur || 1} min=${0.1} max=${Math.max(1, projectDuration(project))} step=${0.1} format=${secs} onChange=${(v) => upd(i, (x) => (x.dur = v))} />
+      </div>
+    </div>`)}
+    <button class="wide" onClick=${add}>+ Add background</button>
   <//>`;
 }

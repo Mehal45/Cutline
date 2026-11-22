@@ -46,6 +46,13 @@ contextBridge.exposeInMainWorld("cutlineDesktop", {
   proxyDone: (part, final, audio) => ipcRenderer.invoke("cutline:proxy-done", part, final, audio),
   proxyAbort: (part) => ipcRenderer.invoke("cutline:proxy-abort", part),
   proxyClear: () => ipcRenderer.invoke("cutline:proxy-clear"),
+  /** Headless export (Cutline --export …): the job, progress, and the result back to the main process. */
+  headless: {
+    job: () => ipcRenderer.invoke("cutline:headless-job"),
+    progress: (p) => ipcRenderer.send("cutline:headless-progress", p),
+    log: (m) => ipcRenderer.send("cutline:headless-log", m),
+    done: (err) => ipcRenderer.send("cutline:headless-done", err || null),
+  },
   /** In-app updates from GitHub Releases (see desktop/updater.cjs). */
   updates: {
     check: () => ipcRenderer.invoke("updates:check"),
